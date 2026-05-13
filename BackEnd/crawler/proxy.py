@@ -1,0 +1,539 @@
+"""
+crawler/proxy.py
+
+IP 代理池全生命周期管理。
+
+职责：
+    1. 维护代理状态机：UNKNOWN → ALIVE ↔ SUSPICIOUS → BANNED
+    2. 线程安全的代理获取（asyncio.Lock）
+    3. 管理员添加的代理持久化到 data/proxies.json
+    4. 单代理校验（alive check）
+    5. 批量 health_check
+
+不负责：
+    1. 从免费网站爬取代理（由 proxy_fetcher.py 负责）
+    2. HTTP 请求封装（由 fetcher.py 负责）
+
+设计要点：
+    - 免费代理（AUTO）不持久化，TTL 短
+    - 管理员添加（ADMIN）持久化，TTL 长
+    - _banned 不持久化——封了就封了
+"""
+
+import asyncio
+import json
+import logging
+import os
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+PERSIST_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "proxies.json")
+
+
+class ProxyStatus(Enum):
+    UNKNOWN = "unknown"
+    ALIVE = "alive"
+    SUSPICIOUS = "suspicious"    # 失败 1 次，再给一次机会
+    BANNED = "banned"           # 永久封禁，不复用
+
+
+class SourceType(Enum):
+    AUTO = "auto"     # 免费代理站爬取，不持久化
+    ADMIN = "admin"   # 管理员手动添加，持久化
+
+
+@dataclass
+class Proxy:
+    """
+    单个代理对象。
+
+    字段说明：
+        host/port:        代理地址
+        status:           状态
+        fail_count:       连续失败次数（触发状态转换）
+        success_count:    累计成功次数
+        last_used:        上次使用时间戳
+        added_at:         加入时间戳
+        source:           来源类型（AUTO/ADMIN）
+        region:           地区（可选）
+    """
+    host: str
+    port: int
+    status: ProxyStatus = ProxyStatus.UNKNOWN
+    fail_count: int = 0
+    success_count: int = 0
+    last_used: float = 0.0
+    added_at: float = field(default_factory=time.time)
+    source: SourceType = SourceType.AUTO
+    region: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @property
+    def is_alive(self) -> bool:
+        return self.status == ProxyStatus.ALIVE
+
+
+# 状态转换阈值
+FAIL_THRESHOLD_BAN = 2       # 连续失败 N 次 → BANNED
+SUSPICIOUS_RESET_ON_SUCCESS = True  # 可疑代理成功一次 → 恢复 ALIVE
+
+# TTL 配置（秒）
+AUTO_TTL = 1800              # 免费代理默认 30 分钟
+ADMIN_TTL = 604800           # 管理员代理默认 7 天
+
+
+class ProxyPool:
+    """
+    IP 代理池。
+
+    支持：
+        - 按来源区分持久化策略
+        - 状态机驱动（report_success / report_failure）
+        - 从 data/proxies.json 加载/保存管理员添加的代理
+        - asyncio.Lock 保护并发安全
+    """
+
+    def __init__(self):
+        self._alive: list[Proxy] = []         # 可用代理
+        self._suspicious: dict[str, Proxy] = {}  # 可疑代理（host:port → Proxy）
+        self._banned: set[str] = set()        # 封禁黑名单（"host:port" 字符串）
+        self._lock = asyncio.Lock()
+
+    # ==================== 公共属性 ====================
+
+    @property
+    def alive_count(self) -> int:
+        return len(self._alive)
+
+    @property
+    def suspicious_count(self) -> int:
+        return len(self._suspicious)
+
+    @property
+    def banned_count(self) -> int:
+        return len(self._banned)
+
+    @property
+    def total_count(self) -> int:
+        return len(self._alive) + len(self._suspicious) + len(self._banned)
+
+    # ==================== 加载/保存 ====================
+
+    async def load_persisted(self) -> int:
+        """
+        从 data/proxies.json 加载管理员添加的代理。
+
+        输入：无
+        输出：加载成功数
+        副作用：修改 _alive
+        """
+        if not os.path.exists(PERSIST_FILE):
+            logger.info(f"持久文件不存在，跳过: {PERSIST_FILE}")
+            return 0
+
+        try:
+            with open(PERSIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"持久文件读取失败: {e}")
+            return 0
+
+        loaded = 0
+        now = time.time()
+        for item in data.get("proxies", []):
+            host = item.get("host")
+            port = item.get("port")
+            if not host or not port:
+                continue
+
+            added_at = item.get("added_at", 0)
+            if now - added_at > ADMIN_TTL:
+                logger.debug(f"管理员代理已过期: {host}:{port}")
+                continue
+
+            key = f"{host}:{port}"
+            if key in self._banned:
+                continue
+
+            proxy = Proxy(
+                host=host,
+                port=port,
+                status=ProxyStatus.UNKNOWN,
+                success_count=item.get("success_count", 0),
+                fail_count=item.get("fail_count", 0),
+                added_at=added_at,
+                source=SourceType.ADMIN,
+                region=item.get("region", ""),
+            )
+            proxy.status = ProxyStatus.ALIVE  # 持久化的代理默认信任
+            if key not in self._suspicious:
+                self._alive.append(proxy)
+                loaded += 1
+
+        logger.info(f"从持久文件加载了 {loaded} 个管理员代理")
+        return loaded
+
+    async def save_persisted(self) -> int:
+        """
+        将来源为 ADMIN 的 _alive 代理写入 data/proxies.json。
+
+        输入：无
+        输出：保存数量
+        副作用：写入磁盘
+        """
+        os.makedirs(os.path.dirname(PERSIST_FILE), exist_ok=True)
+
+        data = {
+            "version": 1,
+            "proxies": [
+                {
+                    "host": p.host,
+                    "port": p.port,
+                    "source": "admin",
+                    "added_at": p.added_at,
+                    "success_count": p.success_count,
+                    "fail_count": p.fail_count,
+                    "region": p.region,
+                }
+                for p in self._alive
+                if p.source == SourceType.ADMIN
+            ]
+        }
+
+        try:
+            with open(PERSIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            logger.info(f"持久化 {len(data['proxies'])} 个管理员代理到 {PERSIST_FILE}")
+            return len(data["proxies"])
+        except IOError as e:
+            logger.error(f"持久文件写入失败: {e}")
+            return 0
+
+    # ==================== 增删操作 ====================
+
+    async def add_proxy(
+        self,
+        host: str,
+        port: int,
+        source: SourceType = SourceType.ADMIN,
+        region: str = "",
+    ) -> bool:
+        """
+        添加一个代理到池中。
+
+        Args:
+            host: IP 地址
+            port: 端口
+            source: 来源类型
+            region: 地区
+
+        Returns:
+            True 表示添加成功，False 表示已在池中或黑名单中
+        """
+        key = f"{host}:{port}"
+        if key in self._banned:
+            logger.info(f"代理 {key} 在黑名单中，拒绝添加")
+            return False
+
+        async with self._lock:
+            for p in self._alive:
+                if p.key == key:
+                    return False
+            if key in self._suspicious:
+                return False
+
+            proxy = Proxy(host=host, port=port, source=source, region=region)
+            proxy.status = ProxyStatus.ALIVE
+            self._alive.append(proxy)
+
+        logger.info(f"代理已添加: {key} (来源: {source.value})")
+        return True
+
+    def get_by_key(self, key: str) -> Optional["Proxy"]:
+        """按 key (host:port) 查找可用代理。"""
+        for p in self._alive:
+            if p.key == key:
+                return p
+        return None
+
+    async def ban_proxy(self, host: str, port: int) -> bool:
+        """
+        管理员主动封禁一个代理。
+
+        Args:
+            host: IP 地址
+            port: 端口
+
+        Returns:
+            True 表示封禁成功，False 表示不在池中
+        """
+        key = f"{host}:{port}"
+
+        async with self._lock:
+            # 从 alive 中找
+            for i, p in enumerate(self._alive):
+                if p.key == key:
+                    self._alive.pop(i)
+                    p.status = ProxyStatus.BANNED
+                    self._banned.add(key)
+                    logger.info(f"管理员封禁代理: {key}")
+                    return True
+            # 从 suspicious 中找
+            if key in self._suspicious:
+                p = self._suspicious.pop(key)
+                p.status = ProxyStatus.BANNED
+                self._banned.add(key)
+                logger.info(f"管理员封禁可疑代理: {key}")
+                return True
+
+        logger.warning(f"代理 {key} 不在池中，无法封禁")
+        return False
+
+    # ==================== 代理获取 ====================
+
+    async def get_proxy(self) -> Optional[Proxy]:
+        """
+        获取一个 ALIVE 代理。
+
+        策略：简单轮转——取头放尾。
+
+        输入：无
+        输出：Proxy 或 None（池空）
+        副作用：修改 _alive 顺序（轮转）
+        """
+        async with self._lock:
+            if not self._alive:
+                return None
+            proxy = self._alive.pop(0)
+            self._alive.append(proxy)
+            proxy.last_used = time.time()
+            return proxy
+
+    def get_stats(self) -> dict:
+        """
+        代理池统计（非阻塞，直接读计数器）。
+
+        输出：{alive, suspicious, banned, total}
+        """
+        return {
+            "alive": self.alive_count,
+            "suspicious": self.suspicious_count,
+            "banned": self.banned_count,
+            "total": self.total_count,
+        }
+
+    def list_all(self) -> list[dict]:
+        """
+        列出所有代理的详情（alive + suspicious + banned）。
+
+        输出：[{host, port, status, source, success_count, fail_count, region, last_used, added_at}, ...]
+        """
+        result = []
+        for p in self._alive:
+            result.append({
+                "host": p.host,
+                "port": p.port,
+                "key": p.key,
+                "status": p.status.value,
+                "source": p.source.value,
+                "success_count": p.success_count,
+                "fail_count": p.fail_count,
+                "region": p.region,
+                "last_used": p.last_used,
+                "added_at": p.added_at,
+            })
+        for key, p in self._suspicious.items():
+            result.append({
+                "host": p.host,
+                "port": p.port,
+                "key": p.key,
+                "status": p.status.value,
+                "source": p.source.value,
+                "success_count": p.success_count,
+                "fail_count": p.fail_count,
+                "region": p.region,
+                "last_used": p.last_used,
+                "added_at": p.added_at,
+            })
+        for key_str in self._banned:
+            parts = key_str.split(":", 1)
+            host = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else 0
+            result.append({
+                "host": host,
+                "port": port,
+                "key": key_str,
+                "status": "banned",
+                "source": "",
+                "success_count": 0,
+                "fail_count": 0,
+                "region": "",
+                "last_used": 0.0,
+                "added_at": 0.0,
+            })
+        return result
+
+    def get_snapshot(self) -> Dict[str, Any]:
+        """获取代理池快照（供管理员 API 查询，不加锁，近似值）。"""
+        return {
+            "alive": len(self._alive),
+            "suspicious": len(self._suspicious),
+            "banned": len(self._banned),
+            "total": self.total_count,
+            "alive_list": [p.key for p in self._alive],
+            "banned_list": list(self._banned),
+        }
+
+    # ==================== 状态上报 ====================
+
+    async def report_success(self, proxy: Proxy) -> None:
+        """
+        上报代理使用成功。
+
+        副作用：
+            - success_count++
+            - 如果来自 _suspicious → 恢复 ALIVE
+        """
+        async with self._lock:
+            proxy.success_count += 1
+            proxy.fail_count = 0
+
+            if proxy.key in self._suspicious:
+                recovered = self._suspicious.pop(proxy.key)
+                recovered.status = ProxyStatus.ALIVE
+                self._alive.append(recovered)
+                logger.debug(f"可疑代理恢复: {proxy.key}")
+
+    async def report_failure(self, proxy: Proxy) -> None:
+        """
+        上报代理使用失败。
+
+        副作用：
+            - fail_count++
+            - 首次失败 → 移入 _suspicious
+            - 再次失败 → 移入 _banned
+
+        注意：调用方需传入同一个 Proxy 对象引用，
+              我们通过 proxy.key 在 _suspicious 中查找。
+        """
+        async with self._lock:
+            proxy.fail_count += 1
+
+            if proxy.fail_count >= FAIL_THRESHOLD_BAN:
+                self._remove_from_all(proxy)
+                proxy.status = ProxyStatus.BANNED
+                self._banned.add(proxy.key)
+                logger.warning(f"代理已封禁: {proxy.key} (连续失败 {proxy.fail_count} 次)")
+
+            elif proxy.fail_count == 1:
+                self._remove_from_all(proxy)
+                proxy.status = ProxyStatus.SUSPICIOUS
+                self._suspicious[proxy.key] = proxy
+                logger.debug(f"代理标记为可疑: {proxy.key}")
+
+    def _remove_from_all(self, proxy: Proxy) -> None:
+        """从 alive 和 suspicious 中移除代理（需在锁内调用）。"""
+        self._alive = [p for p in self._alive if p.key != proxy.key]
+        self._suspicious.pop(proxy.key, None)
+
+    # ==================== 校验 ====================
+
+    @staticmethod
+    async def verify_proxy(host: str, port: int, timeout: float = 5.0) -> bool:
+        """
+        校验单个代理是否可用。
+
+        通过代理请求 httpbin.org/ip，检查是否返回当前代理 IP。
+
+        Args:
+            host: 代理 IP
+            port: 代理端口
+            timeout: 超时秒数
+
+        Returns:
+            True 可用，False 不可用
+        """
+        try:
+            import aiohttp
+        except ImportError:
+            logger.error("aiohttp 未安装，无法校验代理")
+            return False
+
+        proxy_url = f"http://{host}:{port}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "http://httpbin.org/ip",
+                    proxy=proxy_url,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                    ssl=False,
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+                    data = await resp.json()
+                    origin = data.get("origin", "")
+                    return host in origin
+        except Exception:
+            return False
+
+    async def health_check(self, concurrency: int = 10) -> Dict[str, int]:
+        """
+        批量验证 _alive 中所有代理。
+
+        输入：concurrency 并发数
+        输出：{"alive": N, "dead": M, "total": T}
+        副作用：不可用的代理移入 _banned
+        """
+        async with self._lock:
+            proxies_to_check = list(self._alive)
+
+        if not proxies_to_check:
+            logger.info("health_check: 无代理需要验证")
+            return {"alive": 0, "dead": 0, "total": 0}
+
+        semaphore = asyncio.Semaphore(concurrency)
+        dead_count = 0
+        alive_count = 0
+
+        async def _check_one(p: Proxy):
+            nonlocal dead_count, alive_count
+            async with semaphore:
+                ok = await self.verify_proxy(p.host, p.port, timeout=5.0)
+                if ok:
+                    alive_count += 1
+                else:
+                    dead_count += 1
+                    await self.report_failure(p)
+
+        await asyncio.gather(*[_check_one(p) for p in proxies_to_check])
+
+        total = alive_count + dead_count
+        logger.info(f"health_check: {alive_count} 存活, {dead_count} 死亡, {total} 总")
+        return {"alive": alive_count, "dead": dead_count, "total": total}
+
+
+# ==================== 模块级单例 ====================
+
+_pool_instance: Optional[ProxyPool] = None
+
+
+def init_proxy_pool() -> ProxyPool:
+    """获取或创建 ProxyPool 单例。"""
+    global _pool_instance
+    if _pool_instance is None:
+        _pool_instance = ProxyPool()
+    return _pool_instance
+
+
+def get_proxy_pool() -> ProxyPool:
+    """获取已初始化的 ProxyPool 单例。未初始化则抛出异常。"""
+    if _pool_instance is None:
+        raise RuntimeError("ProxyPool 未初始化，请先调用 init_proxy_pool()")
+    return _pool_instance

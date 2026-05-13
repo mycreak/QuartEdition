@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "proxies": [
+    {
+      "host": "47.96.12.38",
+      "port": 3128,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "CN-杭州"
+    },
+    {
+      "host": "47.102.113.242",
+      "port": 8080,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "CN-上海"
+    },
+    {
+      "host": "120.55.162.74",
+      "port": 3128,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "CN-杭州"
+    },
+    {
+      "host": "114.215.174.144",
+      "port": 3128,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "CN-北京"
+    },
+    {
+      "host": "121.43.106.76",
+      "port": 3128,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "CN-杭州"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "purpose": "反向测试代理 — 模拟各种不可用场景",
+  "proxies": [
+    {
+      "host": "16.162.88.123",
+      "port": 8080,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "unknown",
+      "expected": "400 Bad Request — 代理拒绝请求"
+    },
+    {
+      "host": "43.198.99.209",
+      "port": 19035,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "unknown",
+      "expected": "502 Bad Gateway — 上游不可达"
+    },
+    {
+      "host": "43.159.28.58",
+      "port": 19229,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "unknown",
+      "expected": "403 Forbidden — 代理禁止访问"
+    },
+    {
+      "host": "47.94.57.119",
+      "port": 80,
+      "source": "admin",
+      "added_at": 9999999999,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": "unknown",
+      "expected": "timeout 10s — 黑洞代理，不转发流量"
+    }
+  ]
+}

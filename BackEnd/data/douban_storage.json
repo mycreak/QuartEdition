@@ -1,0 +1,26 @@
+{
+  "saved_at": "2026-05-04T21:18:20.730524+00:00",
+  "playwright_state": {
+    "cookies": [
+      {
+        "name": "bid",
+        "value": "UAZmWwgAFrQ",
+        "domain": ".douban.com",
+        "path": "/",
+        "httpOnly": false,
+        "secure": false,
+        "sameSite": "None"
+      },
+      {
+        "name": "dbcl2",
+        "value": "\"208252982:Lgva6rpEgV8\"",
+        "domain": ".douban.com",
+        "path": "/",
+        "httpOnly": true,
+        "secure": true,
+        "sameSite": "None"
+      }
+    ],
+    "origins": []
+  }
+}

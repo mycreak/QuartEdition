@@ -1,0 +1,38 @@
+
+.suggestions-list li { position: relative; left: 0; top: 0; margin-bottom: 7px; height: 35px }
+.suggestions-list li .user-thumb { display: inline-block; *display: inline; float: left; margin: 2px 5px 0 0; vertical-align: top }
+.suggestions-list li .user-thumb img { width: 25px; height: 25px }
+.suggestions-list li .user-name-info { display: inline-block; *display: inline; line-height: 1.4em }
+.suggestions-list li .user-name-info .user-profile-link { color: #333; font-weight: 800 }
+.suggestions-list li .user-name-info .user-profile-link:hover { color: #4b8dc5 }
+.suggestions-list li .user-name-info p { color: #999 }
+.suggestions-list li .user-name-info b { color: #4b8dc5; font-weight: normal; cursor: pointer }
+.suggestions-list li .user-name-info b:hover { text-decoration: underline }
+.suggestions-list li .dismiss { position: absolute }
+.suggestions-list li .dismiss { color: #aaa; margin: 0 0 0 10px; top: 0; right: 0 }
+.suggestions-list li .dismiss:hover { color: #333; text-decoration: none }
+
+
+.suggest-overlay { position: absolute; z-index: 99; width: auto; background: #fff; border: 1px solid #c5c7d2;
+    -moz-border-radius : 3px;
+    -webkit-border-radius : 3px;
+    border-radius: 3px
+}
+.suggest-overlay .bd { min-width: 220px; line-height: 1; background: #fafafa; color: #b3b3b3; padding: 5px;
+    -moz-border-radius : 3px;
+    -webkit-border-radius : 3px;
+    border-radius: 3px
+}
+.suggest-overlay ul { color: #999; padding: 3px 0; min-width: 214px }
+.suggest-overlay li { cursor: pointer; padding: 3px 7px }
+.suggest-overlay li b { font-weight: bold }
+.suggest-overlay li .username { color: #333 }
+.suggest-overlay img { margin-right: 5px; width: 20px; height: 20px; vertical-align: middle }
+.suggest-overlay .on { background: #e9f0f8 }
+
+.mentioned-highlighter { font: 14px/20px "Helvetica Neue",Helvetica,Arial,sans-serif; position: absolute; left: 4px; top: 4px; font-size: 14px; height: 60px; width: 98.5%; overflow: hidden; background: #fff; white-space: pre-wrap; word-wrap: break-word; color: transparent }
+.mentioned-highlighter b { font-weight: normal; background-color: #d2e1f3; color: transparent;
+  -moz-border-radius: 2px;
+  -webkit-border-radius: 2px;
+  border-radius: 2px
+}
