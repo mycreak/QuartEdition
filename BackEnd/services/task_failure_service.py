@@ -185,12 +185,19 @@ class TaskFailureService:
         parent_failure_id: int = 0,
     ) -> int:
         """
-        写入批次级失败事件（scope='batch'）。
+        写入批次级失败事件（scope='batch'），同时释放关联的 douban_id 认领。
 
         输入：
             task_id, worker_id, task_json, event_type, kind, reason,
             admin_id, parent_failure_id
         输出：自增 ID
+
+        副作用：
+            1. INSERT task_failures
+            2. 如果任务类型是 movie_scrape_task/movie_detail_crawl/director_crawl
+               且 task_json 中包含 douban_id → UPDATE douban_ids 释放认领
+               （is_scraped=-1, admin_id=NULL, acquired_at=NULL）
+               释放失败不影响主流程（写日志即可）
         """
         sql = (
             "INSERT INTO task_failures "
@@ -204,7 +211,53 @@ class TaskFailureService:
             admin_id, parent_failure_id,
         ))
         logger.info(f"批次失败已记录: id={fid} kind={kind}")
+
+        # 释放 douban_id 认领（系统自动清理，失败不影响主流程）
+        await self._release_douban_id_on_failure(task_json)
+
         return fid
+
+    async def _release_douban_id_on_failure(self, task_json: str) -> None:
+        """
+        任务失败时释放关联的 douban_id 认领。
+
+        解析 task_json → 提取 type + douban_id →
+        如果 type 是涉及单部电影详情爬取的任务：
+            UPDATE douban_ids SET is_scraped=-1, admin_id=NULL, acquired_at=NULL
+            WHERE douban_id=%s AND is_scraped=0
+            （幂等: is_scraped=0 确保只释放尚未完成的，已完成的不受影响）
+
+        这是系统自动化操作，不涉及权限校验。
+        """
+        try:
+            data = json.loads(task_json)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        task_type = data.get("type", "")
+        douban_id = data.get("douban_id", "")
+
+        # 只处理直接操作 douban_id 的任务类型
+        if task_type not in ("movie_scrape_task", "movie_detail_crawl", "director_crawl"):
+            return
+        if not douban_id:
+            return
+
+        try:
+            raw = self.db.raw_mysql()
+            affected = await raw.execute_update(
+                "UPDATE douban_ids "
+                "SET is_scraped = -1, admin_id = NULL, acquired_at = NULL "
+                "WHERE douban_id = %s AND is_scraped = 0",
+                (douban_id,),
+            )
+            if affected:
+                logger.info(
+                    f"任务失败，已释放 douban_id 认领: "
+                    f"douban_id={douban_id} kind=unknown task_type={task_type}"
+                )
+        except Exception:
+            logger.exception(f"释放 douban_id 认领失败: douban_id={douban_id}")
 
     async def write_item_failure(
         self,

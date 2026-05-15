@@ -817,7 +817,7 @@ async function submitBatchReviewBodyTasks() {
   }
 }
 
-function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取' }; return m[t] || t }
+function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取', director_crawl: '参演职员爬取' }; return m[t] || t }
 function statusLabel(s: string) { const m: Record<string, string> = { submitted: '已提交', running: '执行中', done: '已完成', failed: '失败' }; return m[s] || s }
 function statusColor(s: string) { const m: Record<string, string> = { submitted: 'info', running: 'warning', done: 'success', failed: 'danger' }; return m[s] || 'info' }
 function paramsSummary(row: any) {
@@ -838,7 +838,7 @@ function paramsSummary(row: any) {
     if (params.cookie_id) parts.push(`cookie: ${params.cookie_id}`)
     if (params.proxy_key) parts.push(`proxy: ${params.proxy_key}`)
     return parts.join(' | ')
-  } else if (row.task_type === 'movie_scrape_task') {
+  } else if (row.task_type === 'movie_scrape_task' || row.task_type === 'director_crawl' || row.task_type === 'movie_detail_crawl') {
     const parts: string[] = []
     if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
     if (params.cookie_id) parts.push(`cookie: ${params.cookie_id}`)

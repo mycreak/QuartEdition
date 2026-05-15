@@ -4,7 +4,7 @@ import type { PaginatedResponse } from '@/types/api'
 import type { MovieWithPendingReviews, PendingReview } from '@/types/task'
 
 export const adminMoviesApi = {
-  list: (params: { keyword?: string; type_num?: number; published?: number; page?: number; page_size?: number }) =>
+  list: (params: { keyword?: string; type_num?: number; published?: number; release_year?: number; douban_id?: string; page?: number; page_size?: number }) =>
     client.get<PaginatedResponse<Movie>>('/admin/movies', { params }),
 
   detail: (id: number) =>

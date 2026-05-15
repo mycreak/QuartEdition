@@ -44,6 +44,9 @@ async def list_movies():
     keyword = request.args.get("keyword", "").strip()
     type_num = request.args.get("type_num", type=int)
     published = request.args.get("published", type=int)
+    release_year = request.args.get("release_year", type=int)
+    region_id = request.args.get("region_id", type=int)
+    douban_id = request.args.get("douban_id", "").strip()
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 20, type=int)
 
@@ -52,6 +55,9 @@ async def list_movies():
         keyword=keyword,
         type_num=type_num,
         published=published,
+        release_year=release_year,
+        region_id=region_id,
+        douban_id=douban_id,
         page=page,
         page_size=page_size,
     )

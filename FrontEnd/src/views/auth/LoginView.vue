@@ -26,7 +26,6 @@
         <el-form-item label="用户名" prop="username">
           <el-input
             v-model="form.username"
-            placeholder="请输入用户名"
             :disabled="loading"
             autocomplete="username"
             @input="clearError"
@@ -37,7 +36,6 @@
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="请输入密码（需包含大写+小写+数字）"
             :disabled="loading"
             show-password
             autocomplete="current-password"

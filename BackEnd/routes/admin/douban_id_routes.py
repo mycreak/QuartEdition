@@ -15,10 +15,11 @@ routes/admin/douban_id_routes.py
 """
 
 import logging
+import datetime
 from quart import Blueprint, request, jsonify, g
 from quart_schema import tag
 from utils.auth import require_permission
-from aiomysql import IntegrityError
+from db.query_builder import ConditionBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,6 @@ async def list_douban_ids():
     """
     from quart import current_app
     db = current_app.services.db
-    raw = db.raw_mysql()
 
     page = max(int(request.args.get("page", 1)), 1)
     page_size = min(max(int(request.args.get("page_size", 20)), 1), 100)
@@ -78,7 +78,7 @@ async def list_douban_ids():
         where_sql = "WHERE " + where_sql
 
     count_sql = f"SELECT COUNT(*) AS total FROM douban_ids di {where_sql}"
-    count_rows = await raw.execute_query(count_sql, tuple(params))
+    count_rows = await db.execute_raw(count_sql, tuple(params))
     total = count_rows[0]["total"] if count_rows else 0
 
     offset = (page - 1) * page_size
@@ -90,7 +90,7 @@ async def list_douban_ids():
         "ORDER BY di.created_at DESC LIMIT %s OFFSET %s"
     )
     list_params = list(params) + [page_size, offset]
-    rows = await raw.execute_query(list_sql, tuple(list_params))
+    rows = await db.execute_raw(list_sql, tuple(list_params))
 
     items = [dict(row) for row in rows]
     return jsonify({"items": items, "total": total, "page": page, "page_size": page_size})
@@ -144,29 +144,36 @@ async def add_douban_id():
 
     from quart import current_app
     db = current_app.services.db
-    raw = db.raw_mysql()
 
     try:
-        await raw.execute_insert(
-            "INSERT INTO douban_ids (douban_id, title, source, admin_id, type_num, interval_id) "
-            "VALUES (%s, %s, 'manual', %s, %s, %s)",
-            (douban_id, title, g.user_id, type_num, interval_id),
+        # 用DB层封装的insert方法，自动参数化防注入
+        await db.insert(
+            "douban_ids",
+            {
+                "douban_id": douban_id,
+                "title": title,
+                "source": "manual",
+                "admin_id": g.user_id,
+                "type_num": type_num,
+                "interval_id": interval_id
+            }
         )
-    except IntegrityError as e:
+    except Exception as e:
         # MySQL 1062 Duplicate → douban_id 已存在
         # 1452 FK → type_num 不存在
         code = getattr(e, "args", (None,))[0]
-        if code == 1062:
+        if code == 1062 or "1062" in str(e):
             return jsonify({
                 "error": f"添加失败 — douban_id {douban_id} 已存在",
                 "code": "DUPLICATE_DOUBAN_ID",
             }), 409
-        elif code == 1452:
+        elif code == 1452 or "1452" in str(e):
             return jsonify({
                 "error": f"添加失败 — type_num={type_num} 不存在或无效",
                 "code": "INVALID_TYPE_NUM",
             }), 400
-        raise
+        logger.exception(f"添加 douban_id 异常: {douban_id}")
+        return jsonify({"error": "添加失败，服务器内部错误", "code": "INTERNAL_ERROR"}), 500
     except Exception:
         logger.exception(f"添加 douban_id 异常: {douban_id}")
         return jsonify({"error": "添加失败，服务器内部错误", "code": "INTERNAL_ERROR"}), 500
@@ -189,9 +196,8 @@ async def acquire_douban_id(id: str):
     """
     from quart import current_app
     db = current_app.services.db
-    raw = db.raw_mysql()
 
-    affected = await raw.execute_update(
+    affected = await db.execute_raw(
         "UPDATE douban_ids SET is_acquired=1, acquired_at=NOW(), admin_id=%s "
         "WHERE douban_id=%s AND is_acquired=0 AND is_scraped=0",
         (g.user_id, id),
@@ -221,9 +227,8 @@ async def release_douban_id(id: str):
     """
     from quart import current_app
     db = current_app.services.db
-    raw = db.raw_mysql()
 
-    affected = await raw.execute_update(
+    affected = await db.execute_raw(
         "UPDATE douban_ids SET is_acquired=0, acquired_at=NULL, admin_id=NULL "
         "WHERE douban_id=%s AND is_acquired=1 AND is_scraped=0 AND admin_id=%s",
         (id, g.user_id),

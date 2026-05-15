@@ -298,19 +298,23 @@ class MovieService:
         type_num: int = None,
         published: int = None,
         interval_ids: str = "",
+        release_year: int = None,
+        douban_id: str = "",
+        region_id: int = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
         """
-        批量查询电影列表（分页+搜索+类型过滤+上下架过滤+评分区间过滤），附带评分和类型摘要。
+        批量查询电影列表（分页+搜索+类型过滤+上下架过滤+评分区间过滤+年份过滤+douban_id精确搜索），附带评分和类型摘要。
 
         输入：
-            keyword:      按片名模糊搜索（空字符串=不搜索）
+            keyword:      按片名模糊搜索 或 douban_id 精确搜索（空字符串=不搜索）
             type_num:     豆瓣类型编号过滤（None=不过滤）
             published:    1=仅上架 0=仅下架 None=全部
             interval_ids: 评分区间过滤，逗号分隔 "100:90,90:80"
-                          格式 "{max*10}:{min*10}"，如 100:90 表示 9.0~10.0
-                          空字符串=不过滤，无效格式自动跳过（容错）
+            release_year: 发行年份过滤（None=不过滤）
+            douban_id:    豆瓣 ID 精确搜索（空字符串=不搜索，优先于 keyword 的 douban_id 分支）
+            region_id:    国家/地区ID过滤（None=不过滤）
             page/page_size: 分页参数
         输出：
             {"items": [{id, title, release_year, poster_url, rating, genres}, ...],
@@ -327,14 +331,20 @@ class MovieService:
             params.append(published)
 
         if keyword:
-            where_clauses.append("m.title LIKE %s")
-            params.append(f"%{keyword}%")
+            where_clauses.append("(m.title LIKE %s OR m.douban_id = %s)")
+            params.extend([f"%{keyword}%", keyword])
 
         if type_num:
             where_clauses.append(
                 "m.id IN (SELECT mg.movie_id FROM movie_genres mg WHERE mg.type_num = %s)"
             )
             params.append(type_num)
+
+        if region_id is not None:
+            where_clauses.append(
+                "m.id IN (SELECT mr.movie_id FROM movie_regions mr WHERE mr.region_id = %s)"
+            )
+            params.append(region_id)
 
         if interval_ids:
             or_parts = []
@@ -355,6 +365,14 @@ class MovieService:
                     "m.id IN (SELECT r.movie_id FROM movie_ratings r WHERE "
                     + " OR ".join(or_parts) + ")"
                 )
+
+        if release_year is not None:
+            where_clauses.append("m.release_year = %s")
+            params.append(release_year)
+
+        if douban_id:
+            where_clauses.append("m.douban_id = %s")
+            params.append(douban_id)
 
         where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
@@ -597,12 +615,14 @@ class MovieService:
                 crew[role] = entries
 
         # 类型来自 crawl_progress（genres 表已合并到此处 — 用 GROUP BY 去重）
+        # 注意：GenreRead 模型要求 id / name / is_published 三个必填字段，
+        # 缺一不可，is_published 来自 crawl_progress 表
         genre_rows = await self.db.execute_raw(
-            """SELECT mg.type_num AS id, cp.type_name AS name
+            """SELECT mg.type_num AS id, cp.type_name AS name, cp.is_published
                FROM movie_genres mg
                JOIN crawl_progress cp ON cp.type_num = mg.type_num
                WHERE mg.movie_id = %s
-               GROUP BY mg.type_num, cp.type_name""",
+               GROUP BY mg.type_num, cp.type_name, cp.is_published""",
             (movie_id,)
         )
         genres = [GenreRead(**g) for g in genre_rows]

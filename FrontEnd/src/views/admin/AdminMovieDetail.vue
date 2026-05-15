@@ -296,6 +296,8 @@ async function loadDetail() {
     const res = await adminMoviesApi.detail(movieId)
     detail.value = res.data
     fetchLocalCounts()
+    // 页面加载时预加载所有地区列表，避免打开弹窗时才加载导致空白
+    fetchAllRegions()
   } catch (e: any) {
     error.value = e?.response?.status === 404 ? '电影不存在' : '加载失败，请检查后端服务'
   } finally { loading.value = false }
@@ -447,8 +449,9 @@ async function removeGenre(g: { id: number; name: string }) {
 async function fetchAllRegions() {
   allRegionsLoading.value = true
   try {
-    const res = await client.get<{ items: { id: number; name: string }[] }>('/admin/regions')
-    allRegions.value = res.data.items || []
+    const res = await client.get<{ id: number; name: string }[]>('/admin/regions')
+    // 接口直接返回数组，不需要取items字段
+    allRegions.value = res.data || []
   } catch {
     ElMessage.error('加载地区列表失败')
   } finally {
@@ -458,7 +461,10 @@ async function fetchAllRegions() {
 
 function openAddRegion() {
   addRegionForm.value = { region_id: undefined, name: '' }
-  fetchAllRegions()
+  // 已经加载过地区列表就不用重复请求了
+  if (allRegions.value.length === 0) {
+    fetchAllRegions()
+  }
   addRegionVisible.value = true
 }
 
