@@ -1,0 +1,64 @@
+# 项目专用 Docker 忽略文件
+# 作用：减小构建上下文，加速 COPY 指令
+# 原则：仅包含构建镜像所需的文件
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Venus
+venv/
+env/
+.venv/
+
+# 环境变量（含密钥，绝不对打入镜像）
+.env
+.env.*
+!.env.example
+
+# 测试 & CI
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.log
+
+# 数据（运行时挂载，不打入镜像）
+data/cookies/*
+!data/cookies/.gitkeep
+data/*.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Node (前端)
+node_modules/
+FrontEnd/node_modules/
+
+# 文档
+docs/
+middle_docs/
+FrontEnd/docs/
+
+# 脚本（部署不需要）
+scripts/
+
+# 数据库初始化（由 docker-entrypoint-initdb.d 挂载）
+db_init/

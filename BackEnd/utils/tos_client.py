@@ -16,7 +16,7 @@ utils/tos_client.py
 使用方式：
     from utils.tos_client import get_tos_client
     client = get_tos_client()
-    url = await client.mirror_from_url("https://img3.doubanio.com/...", "posters/poster_xxx.webp")
+    url = await client.mirror_from_url("https://img3.doubanio.com/...", "covers/poster_xxx.webp")
 """
 
 import logging
@@ -105,7 +105,7 @@ class TOSClient:
         上传字节流到 TOS。
 
         输入：
-            key:          对象 Key（如 "posters/poster_1292052.webp"）
+            key:          对象 Key（如 "covers/poster_1292052.webp"）
             data:         图片字节数据
             content_type: MIME 类型
         输出：
@@ -145,7 +145,7 @@ class TOSClient:
 
         输入：
             src_url:  源图片 URL（如豆瓣 CDN 链接）
-            dest_key: 目标对象 Key（如 "posters/poster_1292052.webp"）
+            dest_key: 目标对象 Key（如 "covers/poster_1292052.webp"）
             max_size: 最大图片大小（字节），默认 5MB
         输出：
             成功 → TOS 对象 URL，失败 → None（不抛异常）

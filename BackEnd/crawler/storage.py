@@ -96,7 +96,7 @@ async def _mirror_poster(poster_url: str, douban_id: str) -> str:
         elif ".png" in poster_url.lower():
             ext = ".png"
 
-        dest_key = f"posters/poster_{douban_id}{ext}"
+        dest_key = f"covers/poster_{douban_id}{ext}"
         max_size = 5 * 1024 * 1024
 
         tos_url = await client.mirror_from_url(poster_url, dest_key, max_size=max_size)

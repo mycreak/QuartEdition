@@ -1,0 +1,24 @@
+# BackEnd Docker 构建忽略
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+htmlcov/
+.coverage
+*.log
+logs/
+data/cookies/*
+!data/cookies/.gitkeep
+.vscode/
+.idea/
+*.swp
+*~
+.git/
+.gitignore
+__init__.py

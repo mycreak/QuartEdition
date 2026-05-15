@@ -1,0 +1,24 @@
+# QuartEdition — 前端依赖清单
+# Node.js >= 18
+# 安装: npm install
+#
+# ⚠️ 本项目使用 npm 管理前端依赖，实际安装请执行 npm install（读取 package.json）。
+# 本文件仅作为可读性依赖清单，与 package.json 保持同步。
+
+# ── 运行时依赖 (dependencies) ──
+# vue               ^3.5.32    — 渐进式 UI 框架
+# vue-router         ^4        — SPA 路由
+# pinia              ^2        — 状态管理
+# element-plus      ^2.13.7    — UI 组件库
+# @element-plus/icons-vue ^2.3.2 — Element Plus 图标
+# axios              ^1        — HTTP 客户端
+# echarts-wordcloud  ^2.1.0    — 词云图
+# vue-cropper        ^0.6.5    — 图片裁剪（头像/海报）
+
+# ── 开发依赖 (devDependencies) ──
+# typescript        ~6.0.2     — 类型系统
+# vite              ^8.0.10    — 构建工具
+# @vitejs/plugin-vue ^6.0.6    — Vite Vue 插件
+# vue-tsc            ^3.2.7    — Vue TypeScript 类型检查
+# @vue/tsconfig     ^0.9.1     — Vue 官方 TS 配置预设
+# @types/node       ^24.12.2   — Node.js 类型声明

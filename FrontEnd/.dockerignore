@@ -1,0 +1,14 @@
+# FrontEnd Docker 构建忽略
+node_modules/
+dist/
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*~
+.env
+.env.*
+!.env.example
+*.log
+docs/
