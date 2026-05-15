@@ -2,13 +2,23 @@
   <div class="admin-reviews">
     <h2 class="page-title">评论管理</h2>
 
-    <div class="filter-bar" v-if="queryMovieId">
-      <el-tag closable type="info" @close="clearMovieFilter">
-        仅显示电影 #{{ queryMovieId }} 的评论
-      </el-tag>
+    <div class="toolbar">
+      <el-select
+        v-model="movieIdFilter"
+        placeholder="全部电影"
+        clearable
+        filterable
+        remote
+        remote-show-suffix
+        :remote-method="searchMovies"
+        :loading="movieOptionsLoading"
+        class="movie-filter"
+      >
+        <el-option v-for="m in movieOptions" :key="m.movie_id" :label="m.title" :value="m.movie_id" />
+      </el-select>
     </div>
 
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <el-tab-pane label="长评" name="reviews">
         <el-table :data="reviews" stripe v-loading="revLoading">
           <el-table-column prop="review_id" label="ID" width="90" />
@@ -67,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -81,6 +91,12 @@ const queryMovieId = route.query.movie_id ? Number(route.query.movie_id) : undef
 
 const activeTab = ref(queryTab && ['reviews', 'comments'].includes(queryTab) ? queryTab : 'reviews')
 
+// 电影下拉筛选
+const movieIdFilter = ref<number | undefined>(queryMovieId)
+const movieOptions = ref<{ movie_id: number; title: string }[]>([])
+const movieOptionsLoading = ref(false)
+let movieSearchTimer: ReturnType<typeof setTimeout> | null = null
+
 const reviews = ref<AdminReview[]>([])
 const revPage = ref(1)
 const revTotal = ref(0)
@@ -91,11 +107,36 @@ const comPage = ref(1)
 const comTotal = ref(0)
 const comLoading = ref(false)
 
+// 加载电影选项列表（下拉数据源）
+async function fetchMovieOptions(keyword = '') {
+  movieOptionsLoading.value = true
+  try {
+    const params: Record<string, unknown> = {}
+    if (keyword) params.keyword = keyword
+    const res = await adminReviewsApi.reviewMovies(params as any)
+    movieOptions.value = res.data.items || []
+  } catch { /* ignore */ } finally {
+    movieOptionsLoading.value = false
+  }
+}
+
+// 远程搜索电影（防抖300ms）
+function searchMovies(query: string) {
+  if (movieSearchTimer) clearTimeout(movieSearchTimer)
+  movieSearchTimer = setTimeout(() => fetchMovieOptions(query.trim()), 300)
+}
+
+// 监听电影筛选变化，刷新评论列表
+watch(movieIdFilter, () => {
+  fetchReviews(1)
+  fetchComments(1)
+})
+
 async function fetchReviews(p = 1) {
   revLoading.value = true
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
-    if (queryMovieId) params.movie_id = queryMovieId
+    if (movieIdFilter.value) params.movie_id = movieIdFilter.value
     const res = await adminReviewsApi.reviews(params as any)
     reviews.value = res.data.items
     revTotal.value = res.data.total
@@ -107,12 +148,16 @@ async function fetchComments(p = 1) {
   comLoading.value = true
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
-    if (queryMovieId) params.movie_id = queryMovieId
+    if (movieIdFilter.value) params.movie_id = movieIdFilter.value
     const res = await adminReviewsApi.comments(params as any)
     comments.value = res.data.items
     comTotal.value = res.data.total
     comPage.value = p
   } catch { /* ignore */ } finally { comLoading.value = false }
+}
+
+function onTabChange() {
+  // 切tab时如果有电影筛选就不用管，否则正常
 }
 
 async function toggleReviewPublish(row: AdminReview) {
@@ -133,20 +178,18 @@ async function toggleCommentPublish(row: AdminComment) {
   } catch { ElMessage.error('操作失败') }
 }
 
-function clearMovieFilter() {
-  const url = new URL(window.location.href)
-  url.searchParams.delete('tab')
-  url.searchParams.delete('movie_id')
-  window.location.href = url.pathname
-}
-
-onMounted(() => { fetchReviews(); fetchComments() })
+onMounted(async () => {
+  await fetchMovieOptions()
+  fetchReviews()
+  fetchComments()
+})
 </script>
 
 <style scoped>
 .admin-reviews { max-width: 1100px; }
 .page-title { font-size: 22px; color: #1a1a2e; margin: 0 0 20px; }
+.toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
+.movie-filter { width: 280px; }
 .rating-cell { color: #e8a838; font-weight: 600; }
 .paginator { margin-top: 16px; justify-content: flex-end; }
-.filter-bar { margin-bottom: 12px; }
 </style>

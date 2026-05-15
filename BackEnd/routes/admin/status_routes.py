@@ -230,14 +230,18 @@ def _summarize_task(task_str: str) -> dict:
     elif t == "review_crawl":
         summary["subject_id"] = data.get("douban_id") or data.get("subject_id", "")
         summary["movie_id"] = data.get("movie_id")
-        summary["label"] = f"采集长评摘要: movie={data.get('movie_id')}"
+        # 兼容两种字段：长评正文任务是movie_id，长评列表任务是douban_id
+        movie_identifier = data.get('movie_id') or data.get('douban_id') or '未知'
+        summary["label"] = f"采集长评摘要: movie={movie_identifier}"
     elif t == "review_body_crawl":
         summary["review_id"] = data.get("review_id", "")
         summary["label"] = f"爬取长评正文: {data.get('title', data.get('review_id',''))}"
     elif t == "comment_crawl":
         summary["subject_id"] = data.get("douban_id") or data.get("subject_id", "")
         summary["movie_id"] = data.get("movie_id")
-        summary["label"] = f"爬取短评: movie={data.get('movie_id')}"
+        # 兼容两种字段：短评任务提交用的是douban_id
+        movie_identifier = data.get('movie_id') or data.get('douban_id') or '未知'
+        summary["label"] = f"爬取短评: movie={movie_identifier}"
     else:
         summary["label"] = t
     return summary

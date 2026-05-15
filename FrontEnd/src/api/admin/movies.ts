@@ -22,6 +22,9 @@ export const adminMoviesApi = {
   addCredit: (movieId: number, data: { person_id: number; role_type: string }) =>
     client.post<{ success: boolean; affected: number }>(`/admin/movies/${movieId}/credits`, data),
 
+  addCreditManual: (movieId: number, data: { name: string; douban_id?: string; role_type: string }) =>
+    client.post<{ success: boolean; person_id: number }>(`/admin/movies/${movieId}/credits/manual`, data),
+
   removeCredit: (movieId: number, data: { person_id: number; role_type: string }) =>
     client.delete<{ success: boolean; affected: number }>(`/admin/movies/${movieId}/credits`, { data }),
 
@@ -56,4 +59,10 @@ export const adminMoviesApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
+
+  // 搜索已入库电影（供下拉提示用）
+  searchMovies: (keyword: string) => 
+    client.get<{ items: { douban_id: string; title: string; id: number }[] }>('/admin/movies', { 
+      params: { keyword, page_size: 20 } 
+    }),
 }

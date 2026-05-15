@@ -204,9 +204,9 @@ async def list_tasks():
         page_size:   每页条数（默认 100）
 
     返回字段：
-        crawled_count  — douban_ids 实际入库数（ID 获取进度）
-        scraped_count  — movies 表已入库数（详情页爬取进度）
-        completed_count — movie_credits 表已有关联数（演职人员爬取进度）
+        crawled_count  — douban_ids 去重计数（该类型+区间已入库的独立 douban_id 数量）
+        scraped_count  — movies 已入库的独立电影数（详情页爬取完成）
+        completed_count — movie_credits 已有关联的独立电影数（演职人员爬取完成）
         done = crawled_count >= douban_total
 
     性能：
@@ -247,9 +247,9 @@ async def list_tasks():
         "FROM crawl_progress cp "
         "LEFT JOIN ("
         "  SELECT di.type_num, di.interval_id, "
-        "    COUNT(*) AS crawled_count, "
-        "    COUNT(m.id) AS scraped_count, "
-        "    COUNT(mc.movie_id) AS completed_count "
+        "    COUNT(DISTINCT di.douban_id) AS crawled_count, "
+        "    COUNT(DISTINCT m.id) AS scraped_count, "
+        "    COUNT(DISTINCT CASE WHEN mc.movie_id IS NOT NULL THEN m.id END) AS completed_count "
         "  FROM douban_ids di "
         "  LEFT JOIN movies m ON di.douban_id = m.douban_id "
         "  LEFT JOIN movie_credits mc ON m.id = mc.movie_id "

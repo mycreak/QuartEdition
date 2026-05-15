@@ -2,18 +2,22 @@
   <div v-loading="loading" class="admin-movie-detail">
     <div class="detail-nav">
       <el-button text @click="$router.push('/admin/movies')">← 返回电影列表</el-button>
-      <el-button text @click="$router.push(`/movies/${movieId}`)" v-if="detail">查看用户端 →</el-button>
+      <el-button text @click="$router.push(`/movies/${movieId}`)" v-if="detail && detail.movie.is_published">查看用户端 →</el-button>
     </div>
 
     <ErrorAlert :message="error" @close="error = ''" />
 
     <template v-if="detail">
       <div class="detail-hero">
-        <div class="detail-poster">
-          <el-image v-if="detail.movie?.poster_url" :src="detail.movie.poster_url" fit="contain" referrerpolicy="no-referrer" class="poster-img">
+        <div class="detail-poster" @click="handlePosterUpload" :class="{'clickable': authStore.checkPermission('movie:manage')}">
+          <el-image v-if="detail?.movie?.poster_url" :src="detail.movie.poster_url" fit="contain" referrerpolicy="no-referrer" class="poster-img">
             <template #error><div class="poster-placeholder"><el-icon :size="40"><VideoCamera /></el-icon></div></template>
           </el-image>
           <div v-else class="poster-placeholder"><el-icon :size="40"><VideoCamera /></el-icon></div>
+          <div class="poster-mask" v-if="authStore.checkPermission('movie:manage')">
+            <el-icon :size="20"><Upload /></el-icon>
+            <span>点击更换海报</span>
+          </div>
         </div>
         <div class="detail-info">
           <h1 class="detail-title">{{ detail.movie?.title }}</h1>
@@ -117,13 +121,55 @@
       <el-empty description="未找到该电影" />
     </div>
 
+    <!-- 裁剪海报弹窗 -->
+    <el-dialog
+      v-model="cropperVisible"
+      title="裁剪海报"
+      width="600px"
+      :close-on-click-modal="false"
+      @close="resetCropper"
+    >
+      <div class="cropper-container">
+        <vue-cropper
+          ref="cropperRef"
+          :img="originImageUrl"
+          :output-type="'webp'"
+          :output-size="0.8"
+          :auto-crop="true"
+          :auto-crop-width="400"
+          :auto-crop-height="600"
+          :fixed="true"
+          :fixed-number="[2,3]"
+          :center-box="true"
+          :info="true"
+          :can-move="true"
+          :can-scale="true"
+        />
+      </div>
+      <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
+      <template #footer>
+        <el-button @click="cropperVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleConfirmCrop" :loading="uploading">
+          确认并上传
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      style="display: none"
+      @change="handleFileChange"
+    />
+
     <!-- ═══════ 编辑基本信息弹窗 ═══════ -->
     <el-dialog v-model="editBasicVisible" title="编辑电影信息" width="480px">
       <el-form :model="editBasicForm" label-position="top">
-        <el-form-item label="片名"><el-input v-model="editBasicForm.title" /></el-form-item>
-        <el-form-item label="豆瓣 ID"><el-input v-model="editBasicForm.douban_id" /></el-form-item>
-        <el-form-item label="上映年份"><el-input-number v-model="editBasicForm.release_year" :min="1900" :max="2099" style="width:100%" /></el-form-item>
-        <el-form-item label="海报封面"><PosterUpload v-model="editBasicForm.poster_url" /></el-form-item>
+          <el-form-item label="片名"><el-input v-model="editBasicForm.title" /></el-form-item>
+          <el-form-item label="豆瓣 ID"><el-input :value="detail?.movie?.douban_id || '—'" disabled /></el-form-item>
+          <el-form-item label="上映年份"><el-input v-model="editBasicForm.release_year" placeholder="请输入上映年份" maxlength="4" style="width:100%" /></el-form-item>
+        
       </el-form>
       <template #footer>
         <el-button @click="editBasicVisible = false">取消</el-button>
@@ -134,17 +180,35 @@
     <!-- ═══════ 添加演职人员弹窗 ═══════ -->
     <el-dialog v-model="addCreditVisible" :title="`添加${formatCrewRole(addCreditRole)}`" width="480px">
       <el-form :model="addCreditForm" label-position="top">
-        <el-form-item label="人员">
-          <el-autocomplete v-model="addCreditPersonName" :fetch-suggestions="searchPeople" placeholder="搜索已有人员姓名或输入 person_id" style="width:100%" clearable @select="onPersonSelect" />
+        <el-form-item label="添加方式">
+          <el-radio-group v-model="addCreditMode" style="width: 100%">
+            <el-radio label="select">选择已有人员</el-radio>
+            <el-radio label="manual">手动新增人员</el-radio>
+          </el-radio-group>
         </el-form-item>
-        <el-form-item label="person_id">
-          <el-input-number v-model="addCreditForm.person_id" :min="1" style="width:100%" placeholder="若未自动填充，请手动输入" />
-        </el-form-item>
-        <el-form-item label="角色类型">
-          <el-select v-model="addCreditRoleAssign" style="width:100%">
-            <el-option v-for="r in roleTypes" :key="r" :label="formatCrewRole(r)" :value="r" />
-          </el-select>
-        </el-form-item>
+
+        <!-- 选择已有人员模式 -->
+        <template v-if="addCreditMode === 'select'">
+          <el-form-item label="人员">
+            <el-autocomplete v-model="addCreditPersonName" :fetch-suggestions="searchPeople" placeholder="搜索已有人员姓名或输入 person_id" style="width:100%" clearable @select="onPersonSelect" />
+          </el-form-item>
+          <el-form-item label="豆瓣ID">
+            <el-input :value="addCreditPersonDoubanId || '暂无douban_id'" placeholder="搜索选择人员后自动填充豆瓣ID" style="width:100%" disabled />
+          </el-form-item>
+        </template>
+
+        <!-- 手动新增人员模式 -->
+        <template v-if="addCreditMode === 'manual'">
+          <el-form-item label="人员姓名" required>
+            <el-input v-model="addCreditManualForm.name" placeholder="请输入人员姓名" clearable />
+          </el-form-item>
+          <el-form-item label="豆瓣ID（可选）">
+            <el-input v-model="addCreditManualForm.douban_id" placeholder="请输入豆瓣人员ID（选填）" clearable />
+            <div class="form-hint">填写豆瓣ID可避免后续爬虫重复创建该人员</div>
+          </el-form-item>
+        </template>
+
+
       </el-form>
       <template #footer>
         <el-button @click="addCreditVisible = false">取消</el-button>
@@ -154,8 +218,8 @@
 
     <!-- ═══════ 添加类型弹窗 ═══════ -->
     <el-dialog v-model="addGenreVisible" title="添加电影类型" width="400px">
-      <el-select v-model="addGenreTypeNum" placeholder="选择类型" style="width:100%" filterable>
-        <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
+      <el-select v-model="addGenreTypeNum" placeholder="选择类型" style="width: 100%" filterable>
+        <el-option v-for="t in filteredTypeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
       </el-select>
       <template #footer>
         <el-button @click="addGenreVisible = false">取消</el-button>
@@ -167,9 +231,9 @@
     <el-dialog v-model="addRegionVisible" title="添加地区" width="400px">
       <el-form :model="addRegionForm" label-position="top">
         <el-form-item label="地区">
-          <el-select v-model="addRegionForm.region_id" placeholder="选择现有地区" style="width:100%" filterable :loading="allRegionsLoading">
-            <el-option v-for="r in allRegions" :key="r.id" :label="r.name" :value="r.id" />
-          </el-select>
+        <el-select v-model="addRegionForm.region_id" placeholder="选择现有地区" style="width: 100%" filterable :loading="allRegionsLoading">
+          <el-option v-for="r in filteredRegionOptions" :key="r.id" :label="r.name" :value="r.id" />
+        </el-select>
         </el-form-item>
         <el-form-item label="添加新地区">
           <el-input v-model="addRegionForm.name" placeholder="输入新地区名称，如中国香港" />
@@ -207,8 +271,9 @@ import { adminReviewsApi } from '@/api/admin/reviews'
 import type { MovieDetail, Person } from '@/types/movie'
 import ErrorAlert from '@/components/common/ErrorAlert.vue'
 import { formatRating, formatCount, formatCrewRole } from '@/utils/format'
-import { StarFilled, VideoCamera, Edit, Plus, Close } from '@element-plus/icons-vue'
-import PosterUpload from '@/components/common/PosterUpload.vue'
+import { StarFilled, VideoCamera, Edit, Plus, Close, Upload } from '@element-plus/icons-vue'
+import { VueCropper } from 'vue-cropper/next'
+import 'vue-cropper/next/dist/index.css'
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作', 6: '情色', 7: '歌舞', 8: '儿童', 10: '悬疑', 11: '剧情',
@@ -224,6 +289,18 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
+// 过滤已经关联的类型，避免重复添加
+const filteredTypeOptions = computed(() => {
+  const existingTypeIds = new Set((detail.value?.genres || []).map(g => g.id))
+  return typeOptions.filter(t => !existingTypeIds.has(t.type_num))
+})
+
+// 过滤已经关联的地区，避免重复添加
+const filteredRegionOptions = computed(() => {
+  const existingRegionIds = new Set((detail.value?.regions || []).map(r => r.id))
+  return allRegions.value.filter(r => !existingRegionIds.has(r.id))
+})
+
 const movieId = Number(route.params.id)
 const detail = ref<MovieDetail | null>(null)
 const loading = ref(false)
@@ -236,15 +313,110 @@ const localCommentCount = ref(0)
 /* ── 编辑基本信息 ── */
 const editBasicVisible = ref(false)
 const editBasicSaving = ref(false)
-const editBasicForm = ref({ title: '', douban_id: '', release_year: undefined as number | undefined, poster_url: '' })
+const editBasicForm = ref({ title: '', release_year: undefined as number | undefined })
 
-/* ── 添加演职人员 ── */
+/* ── 海报上传裁剪 ── */
+  const fileInputRef = ref<HTMLInputElement | null>(null)
+  const cropperRef = ref<InstanceType<typeof VueCropper> | null>(null)
+  const cropperVisible = ref(false)
+  const originImageUrl = ref('')
+  const uploading = ref(false)
+  const uploadError = ref('')
+
+  const handlePosterUpload = () => {
+    if (!authStore.checkPermission('movie:manage')) return
+    fileInputRef.value?.click()
+  }
+
+  const handleFileChange = (e: Event) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+
+    if (file.size > 5 * 1024 * 1024) {
+      ElMessage.error('海报大小不能超过5MB')
+      resetFileInput()
+      return
+    }
+
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      ElMessage.error('仅支持png/jpg/webp格式的图片')
+      resetFileInput()
+      return
+    }
+
+    originImageUrl.value = URL.createObjectURL(file)
+    uploadError.value = ''
+    cropperVisible.value = true
+    resetFileInput()
+  }
+
+  const handleConfirmCrop = async () => {
+    if (!cropperRef.value || !detail.value?.movie?.id) return
+
+    uploading.value = true
+    uploadError.value = ''
+
+    try {
+      cropperRef.value.getCropBlob(async (blob: Blob) => {
+        try {
+          const file = new File([blob], 'poster.webp', { type: 'image/webp' })
+          // 先上传到存储
+          const uploadRes = await adminMoviesApi.uploadPoster(file)
+          const posterUrl = uploadRes.data.data.poster_url
+          // 然后更新电影信息
+          const movieId = parseInt(route.params.id as string)
+          if (isNaN(movieId)) {
+            throw new Error('无效的电影ID')
+          }
+          const updateRes = await adminMoviesApi.update(movieId, {
+            poster_url: posterUrl
+          })
+          if (updateRes.data.movie && detail.value) {
+            detail.value.movie = updateRes.data.movie
+            ElMessage.success('海报更新成功')
+            cropperVisible.value = false
+          }
+        } catch (err: any) {
+          const msg = err.response?.data?.error || '海报上传失败'
+          uploadError.value = msg
+          ElMessage.error(msg)
+        } finally {
+          uploading.value = false
+        }
+      })
+    } catch (err: any) {
+      const msg = '海报裁剪失败'
+      uploadError.value = msg
+      ElMessage.error(msg)
+      uploading.value = false
+    }
+  }
+
+  const resetFileInput = () => {
+    if (fileInputRef.value) {
+      fileInputRef.value.value = ''
+    }
+  }
+
+  const resetCropper = () => {
+    if (originImageUrl.value) {
+      URL.revokeObjectURL(originImageUrl.value)
+      originImageUrl.value = ''
+    }
+    cropperRef.value = null
+    uploadError.value = ''
+  }
+
+  /* ── 添加演职人员 ── */
 const addCreditVisible = ref(false)
 const addCreditSaving = ref(false)
 const addCreditRole = ref('')
 const addCreditRoleAssign = ref('')
 const addCreditPersonName = ref('')
+const addCreditPersonDoubanId = ref('')
 const addCreditForm = ref({ person_id: undefined as number | undefined })
+const addCreditMode = ref<'select' | 'manual'>('select')
+const addCreditManualForm = ref({ name: '', douban_id: '' })
 
 /* ── 添加类型 ── */
 const addGenreVisible = ref(false)
@@ -280,6 +452,20 @@ const knownPeople = computed<Person[]>(() => {
     }
   }
   return result
+})
+
+// 获取当前要添加的角色下已存在的人员ID，用于搜索排除
+const currentRoleExistingPersonIds = computed(() => {
+  if (!detail.value || !addCreditRole.value) return new Set<number>()
+  const role = addCreditRole.value
+  if (role === 'director') {
+    return new Set((detail.value.directors || []).map(p => p.id))
+  } else if (role === 'actor') {
+    return new Set((detail.value.actors || []).map(p => p.id))
+  } else {
+    // 其他自定义crew角色
+    return new Set((detail.value.crew?.[role] || []).map((p: Person) => p.id))
+  }
 })
 
 function getStarPercent(stars: number): number {
@@ -336,25 +522,27 @@ function openEditBasic() {
   const m = detail.value?.movie
   editBasicForm.value = {
     title: m?.title || '',
-    douban_id: m?.douban_id || '',
-    release_year: m?.release_year,
-    poster_url: m?.poster_url || '',
+    release_year: m?.release_year
   }
   editBasicVisible.value = true
 }
 
 async function submitEditBasic() {
   if (!detail.value?.movie) return
+
+
   editBasicSaving.value = true
   try {
+    if (isNaN(movieId)) {
+      ElMessage.error('无效的电影ID')
+      return
+    }
     const res = await adminMoviesApi.update(movieId, {
       title: editBasicForm.value.title || undefined,
-      douban_id: editBasicForm.value.douban_id || undefined,
       release_year: editBasicForm.value.release_year,
-      poster_url: editBasicForm.value.poster_url || undefined,
     })
-    if (res.data.movie) {
-      if (detail.value.movie) Object.assign(detail.value.movie, res.data.movie)
+    if (res.data.movie && detail.value) {
+      detail.value.movie = res.data.movie
     }
     ElMessage.success('电影信息已更新')
     editBasicVisible.value = false
@@ -367,14 +555,21 @@ function openAddCredit(role: string) {
   addCreditRole.value = role
   addCreditRoleAssign.value = role
   addCreditPersonName.value = ''
+  addCreditPersonDoubanId.value = ''
   addCreditForm.value = { person_id: undefined }
+  addCreditMode.value = 'select'
+  addCreditManualForm.value = { name: '', douban_id: '' }
   addCreditVisible.value = true
 }
 
 function searchPeople(query: string, cb: (items: { value: string; label: string; person: Person }[]) => void) {
   const q = query.toLowerCase()
+  const existingIds = currentRoleExistingPersonIds.value
   const items = knownPeople.value
-    .filter(p => p.name.toLowerCase().includes(q) || String(p.id).includes(q))
+    .filter(p => 
+      (p.name.toLowerCase().includes(q) || String(p.id).includes(q)) 
+      && !existingIds.has(p.id) // 排除当前角色已添加的人员
+    )
     .slice(0, 20)
     .map(p => ({ value: p.name, label: `${p.name} (id:${p.id})`, person: p }))
   cb(items)
@@ -383,16 +578,34 @@ function searchPeople(query: string, cb: (items: { value: string; label: string;
 function onPersonSelect(item: { person: Person }) {
   addCreditForm.value.person_id = item.person.id
   addCreditPersonName.value = item.person.name
+  addCreditPersonDoubanId.value = item.person.douban_id || ''
 }
 
 async function submitAddCredit() {
-  if (!addCreditForm.value.person_id) { ElMessage.warning('请选择或输入人员 ID'); return }
   addCreditSaving.value = true
   try {
-    await adminMoviesApi.addCredit(movieId, {
-      person_id: addCreditForm.value.person_id,
-      role_type: addCreditRoleAssign.value,
-    })
+    if (addCreditMode.value === 'select') {
+      // 选择已有人员模式
+      if (!addCreditForm.value.person_id) { 
+        ElMessage.warning('请选择或输入人员 ID')
+        return
+      }
+      await adminMoviesApi.addCredit(movieId, {
+        person_id: addCreditForm.value.person_id,
+        role_type: addCreditRoleAssign.value,
+      })
+    } else {
+      // 手动新增人员模式
+      if (!addCreditManualForm.value.name.trim()) {
+        ElMessage.warning('请输入人员姓名')
+        return
+      }
+      await adminMoviesApi.addCreditManual(movieId, {
+        name: addCreditManualForm.value.name.trim(),
+        douban_id: addCreditManualForm.value.douban_id.trim() || undefined,
+        role_type: addCreditRoleAssign.value,
+      })
+    }
     ElMessage.success('演职人员已添加')
     addCreditVisible.value = false
     await loadDetail()
@@ -570,9 +783,14 @@ onMounted(() => {
 .admin-movie-detail { max-width: 900px; padding: 0 24px 32px; }
 .detail-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 12px 0; border-bottom: 1px solid #ebeef5; }
 .detail-hero { display: flex; gap: 32px; flex-wrap: wrap; }
-.detail-poster { width: 200px; flex-shrink: 0; }
+.detail-poster { width: 200px; flex-shrink: 0; position: relative; border-radius: 6px; overflow: hidden; }
+.detail-poster.clickable { cursor: pointer; }
+.detail-poster.clickable:hover .poster-mask { opacity: 1; }
 .poster-img { width: 200px; min-height: 280px; border-radius: 6px; background: #f0f0f0; }
 .poster-placeholder { width: 200px; height: 280px; display: flex; align-items: center; justify-content: center; color: #ccc; background: linear-gradient(135deg, #e0e0e0, #f5f5f5); border-radius: 6px; }
+.poster-mask { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; font-size: 14px; gap: 8px; border-radius: 6px; }
+.cropper-container { height: 500px; }
+.upload-error { color: #f56c6c; font-size: 13px; padding: 8px 0 0 10px; }
 .detail-info { flex: 1; min-width: 300px; }
 .detail-title { font-size: 24px; color: #1a1a2e; margin: 0 0 12px; }
 .detail-meta { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; font-size: 14px; flex-wrap: wrap; }

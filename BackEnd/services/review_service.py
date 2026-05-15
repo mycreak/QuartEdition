@@ -102,6 +102,10 @@ class ReviewService:
         finally:
             self.db._set_type(original_type)
 
+        # 映射ID字段，兼容前端：长评把_id映射为review_id
+        for item in items:
+            if "review_id" not in item or not item["review_id"]:
+                item["review_id"] = item.get("_id", "")
         await self._attach_movie_titles(items)
         return items, total
 
@@ -149,6 +153,10 @@ class ReviewService:
         finally:
             self.db._set_type(original_type)
 
+        # 映射ID字段，兼容前端：短评把_id映射为comment_id
+        for item in items:
+            if "comment_id" not in item or not item["comment_id"]:
+                item["comment_id"] = item.get("_id", "")
         await self._attach_movie_titles(items)
         return items, total
 
@@ -248,6 +256,57 @@ class ReviewService:
                 movie_id, e,
             )
             return []
+        finally:
+            self.db._set_type(original_type)
+
+    async def get_distinct_movie_ids(self) -> List[int]:
+        """
+        获取所有有评论（长评或短评）的电影 ID 列表。
+
+        输入：无
+        输出：去重的 movie_id 列表
+        副作用：MongoDB distinct 查询（reviews + comments 两集合）
+        """
+        ids = set()
+        try:
+            from db.mongodb import get_mongodb
+            mongodb = get_mongodb()
+            review_ids = await mongodb["reviews"].distinct("movie_id")
+            ids.update(int(i) for i in review_ids if i is not None)
+            comment_ids = await mongodb["comments"].distinct("movie_id")
+            ids.update(int(i) for i in comment_ids if i is not None)
+        except Exception as e:
+            logger.warning("获取 distinct movie_id 失败: %s，返回空列表", e)
+            return []
+        return sorted(ids)
+
+    async def count_comments_by_movie_id(self, movie_id: int) -> int:
+        """
+        获取指定电影的已上架短评总数，供 comment_crawl 顺延偏移计算。
+
+        输入：movie_id: 本地电影ID
+        输出：已上架短评数量（连接失败等异常返回 0）
+        """
+        if not movie_id:
+            return 0
+
+        query = {"movie_id": movie_id, "is_published": True}
+        original_type = self.db._get_type()
+        self.db.set_database("mongodb")
+        try:
+            items, total = await self.db.find(
+                table="comments",
+                conditions=query,
+                page=1,
+                page_size=1,
+            )
+            return total
+        except Exception as e:
+            logger.warning(
+                "统计短评数量异常 movie_id=%s: %s，返回 0 降级处理",
+                movie_id, e,
+            )
+            return 0
         finally:
             self.db._set_type(original_type)
 

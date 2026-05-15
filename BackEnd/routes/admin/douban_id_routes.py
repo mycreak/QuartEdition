@@ -197,7 +197,7 @@ async def acquire_douban_id(id: str):
     from quart import current_app
     db = current_app.services.db
 
-    affected = await db.execute_raw(
+    affected = await db.raw_mysql().execute_update(
         "UPDATE douban_ids SET is_acquired=1, acquired_at=NOW(), admin_id=%s "
         "WHERE douban_id=%s AND is_acquired=0 AND is_scraped=0",
         (g.user_id, id),
@@ -228,7 +228,7 @@ async def release_douban_id(id: str):
     from quart import current_app
     db = current_app.services.db
 
-    affected = await db.execute_raw(
+    affected = await db.raw_mysql().execute_update(
         "UPDATE douban_ids SET is_acquired=0, acquired_at=NULL, admin_id=NULL "
         "WHERE douban_id=%s AND is_acquired=1 AND is_scraped=0 AND admin_id=%s",
         (id, g.user_id),

@@ -15,6 +15,7 @@ export interface Movie {
 export interface Person {
   id: number
   name: string
+  douban_id?: string
 }
 
 export interface Genre {

@@ -70,6 +70,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import type { FormInstance, FormRules } from 'element-plus'
 import { usernameRule, passwordRule } from '@/utils/validation'
+import type { PermissionCode } from '@/utils/permission'
 
 const router = useRouter()
 const route = useRoute()
@@ -112,7 +113,7 @@ function getFirstAdminPage(): string {
   }
 
   // 按优先级检查权限
-  const pages = [
+  const pages: Array<{ path: string; permission: PermissionCode }> = [
     { path: '/admin', permission: 'system:monitor' },
     { path: '/admin/movies', permission: 'movie:read' },
     { path: '/admin/reviews', permission: 'comment:read' },

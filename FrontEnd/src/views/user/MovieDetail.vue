@@ -174,7 +174,7 @@
               {{ formatRating(comment.rating) }}
             </span>
           </div>
-          <p class="comment-card-content" v-html="highlightKeyword(comment.content, filterKeyword)">
+          <p class="comment-card-content" v-html="highlightKeyword(comment.content || comment.text, filterKeyword)">
           </p>
         </div>
         <div v-if="!filteredCommentList.length && !commentLoading" class="empty-tab">

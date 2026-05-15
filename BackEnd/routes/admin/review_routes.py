@@ -4,8 +4,9 @@ routes/admin/review_routes.py
 评论管理（MongoDB）。
 
 端点：
-    GET    /admin/reviews                     长评列表
-    GET    /admin/comments                    短评列表
+    GET    /admin/reviews                     长评列表（可选 movie_id/rating 过滤）
+    GET    /admin/comments                    短评列表（可选 movie_id/rating 过滤）
+    GET    /admin/review-movies               有评论的电影下拉列表
     POST   /admin/reviews/<id>/publish        上架长评  [comment:manage]
     POST   /admin/reviews/<id>/unpublish      下架长评  [comment:manage]
     POST   /admin/comments/<id>/publish       上架短评  [comment:manage]
@@ -70,6 +71,55 @@ async def list_comments():
         page_size=page_size,
     )
     return jsonify({"items": items, "page": page, "page_size": page_size, "total": total})
+
+
+@review_bp.route("/review-movies", methods=["GET"])
+@require_permission("comment:read")
+@tag(["评论管理"])
+async def list_review_movies():
+    """
+    获取有评论的电影下拉列表（供评论管理页按电影筛选使用）。
+
+    查询逻辑：
+        ① 从 MongoDB reviews + comments 两集合分别取 distinct movie_id
+        ② 合并去重 → 批量查 MySQL movies 表获取 title
+        ③ 返回 [{movie_id, title}, ...] 按 title 排序
+
+    参数：
+        keyword: 可选，按电影名模糊搜索（匹配 MySQL movies.title）
+    """
+    from quart import current_app
+    from services.review_service import _get_review_service
+
+    keyword = request.args.get("keyword", "").strip()
+
+    svc = _get_review_service()
+    movie_ids = await svc.get_distinct_movie_ids()
+
+    if not movie_ids:
+        return jsonify({"items": [], "total": 0})
+
+    # 批量查 MySQL 获取电影名
+    db = current_app.services.db
+    placeholders = ",".join(["%s"] * len(movie_ids))
+
+    if keyword:
+        sql = (
+            f"SELECT id AS movie_id, title FROM movies "
+            f"WHERE id IN ({placeholders}) AND title LIKE %s "
+            f"ORDER BY title ASC"
+        )
+        rows = await db.execute_raw(sql, tuple(movie_ids) + (f"%{keyword}%",))
+    else:
+        sql = (
+            f"SELECT id AS movie_id, title FROM movies "
+            f"WHERE id IN ({placeholders}) "
+            f"ORDER BY title ASC"
+        )
+        rows = await db.execute_raw(sql, tuple(movie_ids))
+
+    items = [dict(row) for row in rows]
+    return jsonify({"items": items, "total": len(items)})
 
 
 # ═══════════════════════════════════════

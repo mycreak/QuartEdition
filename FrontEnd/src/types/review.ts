@@ -19,4 +19,6 @@ export interface Comment {
   rating?: number
   is_published?: boolean
   created_at: string
+  // 兼容历史字段名
+  text?: string
 }

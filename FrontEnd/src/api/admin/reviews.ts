@@ -24,6 +24,9 @@ export interface AdminComment {
 }
 
 export const adminReviewsApi = {
+  reviewMovies: (params?: { keyword?: string }) =>
+    client.get<{ items: { movie_id: number; title: string }[]; total: number }>('/admin/review-movies', { params }),
+
   reviews: (params: { movie_id?: number; page?: number; page_size?: number }) =>
     client.get<PaginatedResponse<AdminReview>>('/admin/reviews', { params }),
 

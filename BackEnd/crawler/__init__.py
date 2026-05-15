@@ -56,6 +56,48 @@ REVIEW_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/reviews"
 COMMENT_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/comments"
 SUBJECT_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/"
 
+async def _trigger_wordcloud_generation(movie_id: int) -> None:
+    """
+    后台异步生成短评词云缓存。
+
+    调用链：comment_crawl 完成 → asyncio.create_task(本函数)
+    不阻塞主流程，失败静默。
+
+    输入：movie_id 本地电影 ID
+    副作用：MongoDB 查询 + DeepSeek API 调用 + Redis 写入
+    """
+    try:
+        from services.review_service import _get_review_service
+        from utils.ai_client import get_ai_client
+        from db.redis import redis_set
+
+        review_svc = _get_review_service()
+        comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=200)
+        if len(comments) < 10:
+            logger.debug(f"[wordcloud] movie_id={movie_id} 短评不足 10 条，跳过词云生成")
+            return
+
+        ai_client = get_ai_client()
+        words = await ai_client.generate_comment_wordcloud(comments)
+        if not words:
+            logger.warning(f"[wordcloud] movie_id={movie_id} AI 生成失败")
+            return
+
+        import json
+        from datetime import datetime, timezone
+        data = {
+            "words": words,
+            "total_words": len(words),
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        await redis_set(
+            f"wordcloud:movie:{movie_id}",
+            json.dumps(data, ensure_ascii=False),
+        )
+        logger.info(f"[wordcloud] movie_id={movie_id} 词云已生成: {len(words)} 个关键词")
+    except Exception as e:
+        logger.warning(f"[wordcloud] movie_id={movie_id} 后台生成失败（不影响主流程）: {e}")
+
 
 # ═══════════════════════════════════════════════════════════════
 # 辅助函数（无状态，纯逻辑）
@@ -689,13 +731,31 @@ class CrawlerEngine:
 
         # 兼容前端统一的 pages 参数，兼容旧字段 comment_pages
         pages = data.get("pages") or data.get("comment_pages") or crawler_config.comment_list_pages
-        logger.info(f"[comment_crawl] task={task_id} douban_id={douban_id} movie_id={movie_id} 开始抓取 {pages} 页短评")
+
+        # 查询已采集数量，计算顺延偏移（参照 review_crawl 的顺延模式）
+        from services.review_service import _get_review_service
+        review_svc = _get_review_service()
+        existing_count = await review_svc.count_comments_by_movie_id(movie_id)
+        start_offset = existing_count
+        logger.info(f"[comment_crawl] task={task_id} douban_id={douban_id} movie_id={movie_id} "
+                    f"已有 {existing_count} 条, 将从 offset={start_offset} 顺延取 {pages} 页短评")
+
+        cfg = crawler_config
+
+        # 预等待（反反爬）
+        logger.info(f"[comment_crawl] 等待 {cfg.comment_crawl_pre_sleep}s（反反爬）...")
+        await asyncio.sleep(cfg.comment_crawl_pre_sleep)
 
         all_comments = []
         seen_cids = set()
 
         for page_num in range(pages):
-            start = page_num * crawler_config.page_size
+            # 翻页间等待（第1页也等待，模拟真人打开页面到开始浏览的间隔）
+            if page_num > 0:
+                logger.info(f"[comment_crawl] 翻页间等待 {cfg.comment_crawl_between_sleep}s...")
+                await asyncio.sleep(cfg.comment_crawl_between_sleep)
+
+            start = start_offset + page_num * crawler_config.page_size
             page_url = (
                 f"{COMMENT_LIST_BASE.format(douban_id=douban_id)}"
                 f"?start={start}&limit={crawler_config.page_size}&status=P"
@@ -740,7 +800,8 @@ class CrawlerEngine:
             if saved > 0 and movie_id:
                 from db.redis import redis_delete
                 await redis_delete(f"wordcloud:movie:{movie_id}")
-                logger.debug(f"[comment_crawl] 已清除词云缓存: movie_id={movie_id}")
+                asyncio.create_task(_trigger_wordcloud_generation(movie_id))
+                logger.debug(f"[comment_crawl] 已清除词云缓存并触发后台重新生成: movie_id={movie_id}")
 
             if cookie_id and self._identity_manager is not None:
                 try:

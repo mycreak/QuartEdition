@@ -82,10 +82,17 @@ CREATE TABLE people (
   id          INT           NOT NULL AUTO_INCREMENT,
   name        VARCHAR(128)  NOT NULL,
   douban_id   VARCHAR(64)   DEFAULT NULL,
+  admin_id    INT           NOT NULL DEFAULT 0 COMMENT '录入的管理员ID，0代表爬虫自动录入',
+  is_duplicate TINYINT      NOT NULL DEFAULT 0 COMMENT '重名标记：0=无重名/已确认，1=待确认重名，-1=无效重复记录',
   created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+### 新增字段更新SQL（现有数据库执行即可）
+```sql
+ALTER TABLE people ADD COLUMN admin_id INT NOT NULL DEFAULT 0 COMMENT '录入的管理员ID，0代表爬虫自动录入' AFTER douban_id;
+ALTER TABLE people ADD COLUMN is_duplicate TINYINT NOT NULL DEFAULT 0 COMMENT '重名标记：0=无重名/已确认，1=待确认重名，-1=无效重复记录' AFTER admin_id;
 ```
 
 | 说明 |
@@ -100,7 +107,8 @@ CREATE TABLE regions (
   id          INT           NOT NULL AUTO_INCREMENT,
   name        VARCHAR(64)   NOT NULL,
   created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_regions_name (name) COMMENT '地区名称唯一约束，避免重复国家/地区'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 

@@ -17,11 +17,17 @@ class CrawlerConfig(BaseSettings):
 
     分页控制：
         review_list_pages: 长评摘要每任务最大翻页数（默认 3 页 ≈ 60 条）
-        comment_list_pages: 短评每任务最大翻页数（默认 5 页 ≈ 100 条）
+        comment_list_pages: 短评每任务最大翻页数（默认 1 页 = 20 条，可通过前端 pages 参数覆盖）
 
     长评爬取控制（v3 增强版）：
         review_crawl_max_new: 每次 review_crawl 最多取的新评论数（默认 5 条，顺延偏移）
-        review_crawl_pre_sleep: 翻页前等待秒数（默认 45s，反反爬）长评正文控制：
+        review_crawl_pre_sleep: 翻页前等待秒数（默认 45s，反反爬）
+
+    短评爬取控制（v4 增强版）：
+        comment_crawl_pre_sleep: 翻页前等待秒数（默认 15s，反反爬）
+        comment_crawl_between_sleep: 翻页间等待秒数（默认 30s，模拟真人浏览节奏）
+
+    长评正文控制：
         review_body_between_sleep: 已废弃（v4 改单条模式后不再使用，间隔由 worker_rest 控制）
         review_body_page_wait: 等待动态内容加载（默认 15s）
         review_body_verify_wait: 点击验证按钮后等待（默认 45s）
@@ -48,7 +54,7 @@ class CrawlerConfig(BaseSettings):
     )
 
     review_list_pages: int = 3
-    comment_list_pages: int = 5
+    comment_list_pages: int = 1
     page_size: int = 20
     review_body_max_per_task: int = 20
     api_concurrency: int = 5
@@ -57,6 +63,8 @@ class CrawlerConfig(BaseSettings):
 
     review_crawl_max_new: int = 5
     review_crawl_pre_sleep: float = 45.0
+    comment_crawl_pre_sleep: float = 15.0
+    comment_crawl_between_sleep: float = 30.0
     review_body_between_sleep: float = 120.0
     review_body_page_wait: float = 15.0
     review_body_verify_wait: float = 45.0

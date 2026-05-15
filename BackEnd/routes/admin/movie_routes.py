@@ -9,13 +9,19 @@ routes/admin/movie_routes.py
     PATCH  /admin/movies/<id>              编辑基本信息                          [movie:manage]
     POST   /admin/movies/<id>/publish      上架                                 [movie:manage]
     POST   /admin/movies/<id>/unpublish    下架                                 [movie:manage]
-    POST   /admin/movies/<id>/credits      添加演职人员                          [movie:manage]
+    POST   /admin/movies/<id>/credits      添加演职人员（选已有人员）            [movie:manage]
+    POST   /admin/movies/<id>/credits/manual  手动新增演职人员（含重名检测）     [movie:manage]
     DELETE /admin/movies/<id>/credits      移除演职人员                          [movie:manage]
     POST   /admin/movies/<id>/genres       添加类型                              [movie:manage]
     DELETE /admin/movies/<id>/genres/<type_num> 移除类型                        [movie:manage]
     POST   /admin/movies/<id>/regions      添加地区                              [movie:manage]
     DELETE /admin/movies/<id>/regions/<region_id> 移除地区                      [movie:manage]
     PUT    /admin/movies/<id>/rating       更新评分                              [movie:manage]
+    # 重名人员管理
+    GET    /admin/duplicate-persons        重名人员待处理列表                    [movie:manage]
+    GET    /admin/duplicate-persons/<person_id>/movies  人员关联电影列表          [movie:manage]
+    POST   /admin/duplicate-persons/confirm-not-same  确认不是同一人             [movie:manage]
+    POST   /admin/duplicate-persons/merge  合并重名人员                          [movie:manage]
 """
 
 import logging
@@ -185,6 +191,37 @@ async def add_credit(movie_id: int):
     return jsonify({"success": True, "affected": result}), 201
 
 
+@movie_bp.route("/movies/<int:movie_id>/credits/manual", methods=["POST"])
+@require_permission("movie:manage")
+@tag(["电影管理"])
+async def add_credit_manual(movie_id: int):
+    """
+    手动新增演职人员（含重名检测）。
+    请求体：
+        name: 必填，人员姓名
+        douban_id: 可选，豆瓣人员ID
+        role_type: 必填，角色类型
+    """
+    from quart import current_app
+    from models.movie_models import AddCreditManualRequest
+
+    try:
+        body = await request.get_json()
+        req = AddCreditManualRequest(**body)
+    except Exception as e:
+        return jsonify({"error": f"参数校验失败: {str(e)}"}), 400
+
+    try:
+        person_id = await current_app.services.movie_service.add_credit_manual(
+            movie_id, req.name, req.role_type, g.user_id, req.douban_id
+        )
+    except Exception as e:
+        return jsonify({"error": f"添加失败: {str(e)}"}), 500
+
+    logger.info(f"手动添加演职人员成功: movie_id={movie_id} person_id={person_id} admin_id={g.user_id}")
+    return jsonify({"success": True, "person_id": person_id}), 201
+
+
 @movie_bp.route("/movies/<int:movie_id>/credits", methods=["DELETE"])
 @require_permission("movie:manage")
 @tag(["电影管理"])
@@ -197,6 +234,104 @@ async def remove_credit(movie_id: int):
         role_type: 必填
     """
     from quart import current_app
+
+
+# ═══════════════════════════════════════
+# 重名人员管理
+# ═══════════════════════════════════════
+@movie_bp.route("/duplicate-persons", methods=["GET"])
+@require_permission("movie:manage")
+@tag(["重名人员管理"])
+async def duplicate_person_list():
+    """
+    重名人员待处理列表，分页。
+    参数：
+        page: 页码，默认1
+        page_size: 每页条数，默认20
+    """
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 20, type=int)
+
+    from quart import current_app
+    list_data, total = await current_app.services.movie_service.get_duplicate_person_list(page, page_size)
+    return jsonify({
+        "items": list_data,
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    })
+
+
+@movie_bp.route("/duplicate-persons/<int:person_id>/movies", methods=["GET"])
+@require_permission("movie:manage")
+@tag(["重名人员管理"])
+async def get_person_movies(person_id: int):
+    """查询人员关联的所有电影列表"""
+    from quart import current_app
+    movies = await current_app.services.movie_service.get_person_movies(person_id)
+    return jsonify({"items": movies})
+
+
+@movie_bp.route("/duplicate-persons/confirm-not-same", methods=["POST"])
+@require_permission("movie:manage")
+@tag(["重名人员管理"])
+async def confirm_not_same():
+    """
+    确认两个重名人员不是同一人。
+    请求体：
+        duplicate_id: 重名记录ID
+        person_id1: 人员1ID
+        person_id2: 人员2ID
+    """
+    from quart import current_app
+    from models.movie_models import ConfirmNotSameRequest
+
+    try:
+        body = await request.get_json()
+        req = ConfirmNotSameRequest(**body)
+    except Exception as e:
+        return jsonify({"error": f"参数校验失败: {str(e)}"}), 400
+
+    try:
+        await current_app.services.movie_service.confirm_not_same(
+            req.duplicate_id, req.person_id1, req.person_id2, g.user_id
+        )
+    except Exception as e:
+        return jsonify({"error": f"操作失败: {str(e)}"}), 500
+
+    logger.info(f"确认不是同一人成功: duplicate_id={req.duplicate_id} admin_id={g.user_id}")
+    return jsonify({"success": True, "message": "操作成功"})
+
+
+@movie_bp.route("/duplicate-persons/merge", methods=["POST"])
+@require_permission("movie:manage")
+@tag(["重名人员管理"])
+async def merge_person():
+    """
+    合并两个重名人员。
+    请求体：
+        duplicate_id: 重名记录ID
+        keep_person_id: 保留的人员ID
+        discard_person_id: 废弃的人员ID
+    """
+    from quart import current_app
+    from models.movie_models import MergePersonRequest
+
+    try:
+        body = await request.get_json()
+        req = MergePersonRequest(**body)
+    except Exception as e:
+        return jsonify({"error": f"参数校验失败: {str(e)}"}), 400
+
+    try:
+        await current_app.services.movie_service.merge_person(
+            req.duplicate_id, req.keep_person_id, req.discard_person_id, g.user_id
+        )
+    except Exception as e:
+        return jsonify({"error": f"合并失败: {str(e)}"}), 500
+
+    logger.info(f"人员合并成功: keep_id={req.keep_person_id} discard_id={req.discard_person_id} admin_id={g.user_id}")
+    return jsonify({"success": True, "message": "合并成功"})
 
     try:
         body = await request.get_json()
@@ -476,6 +611,9 @@ async def list_pending_reviews(movie_id: int):
     参数:
         page:     页码，默认 1
         page_size: 每页条数，默认 10
+        keyword:  可选，标题模糊搜索
+        start_date: 可选，起始日期（YYYY-MM-DD）
+        end_date: 可选，结束日期（YYYY-MM-DD）
 
     权限: crawler:task:write（复用提交任务的权限，无需新增权限点）
     """
@@ -483,23 +621,44 @@ async def list_pending_reviews(movie_id: int):
 
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 10, type=int)
+    keyword = request.args.get("keyword", "", type=str).strip()
+    start_date = request.args.get("start_date", "", type=str).strip()
+    end_date = request.args.get("end_date", "", type=str).strip()
+    
     offset = (page - 1) * page_size
 
     raw = current_app.services.movie_service.db.raw_mysql()
+    
+    # 构建动态查询条件
+    where_conditions = ["movie_id = %s", "status = 'pending'"]
+    params = [movie_id]
+    
+    if keyword:
+        where_conditions.append("title LIKE %s")
+        params.append(f"%{keyword}%")
+    if start_date:
+        where_conditions.append("`date` >= %s")
+        params.append(start_date)
+    if end_date:
+        where_conditions.append("`date` <= %s")
+        params.append(end_date)
+    
+    where_sql = "WHERE " + " AND ".join(where_conditions)
 
     count_rows = await raw.execute_query(
-        "SELECT COUNT(1) AS total FROM movie_review WHERE movie_id = %s AND status = 'pending'",
-        (movie_id,),
+        f"SELECT COUNT(1) AS total FROM movie_review {where_sql}",
+        tuple(params),
     )
     total = count_rows[0]["total"] if count_rows else 0
-
+    
+    params.extend([page_size, offset])
     rows = await raw.execute_query(
-        """SELECT review_id, title, author, useful_count, `date`
+        f"""SELECT review_id, title, author, useful_count, `date`
            FROM movie_review
-           WHERE movie_id = %s AND status = 'pending'
+           {where_sql}
            ORDER BY useful_count DESC
            LIMIT %s OFFSET %s""",
-        (movie_id, page_size, offset),
+        tuple(params),
     )
 
     items = [

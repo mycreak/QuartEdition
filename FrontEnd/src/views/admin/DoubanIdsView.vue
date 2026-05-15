@@ -51,7 +51,7 @@
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button v-if="!row.is_acquired && !row.is_scraped" size="small" type="primary" link @click="acquire(row)">认领</el-button>
-          <el-button v-else-if="row.is_acquired && !row.is_scraped" size="small" type="warning" link @click="release(row)">释放</el-button>
+          <el-button v-else-if="row.is_acquired && !row.is_scraped && row.admin_id === currentUserId" size="small" type="warning" link @click="release(row)">释放</el-button>
           <span v-else class="text-muted">—</span>
         </template>
       </el-table-column>
@@ -87,8 +87,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
 import { adminDoubanIdsApi, type DoubanId } from '@/api/admin/douban_ids'
 
 const TYPE_MAP: Record<number, string> = {
@@ -116,6 +117,9 @@ const intervalOptions = [
   { interval_id: '20:10', label: '1.0~2.0' },
   { interval_id: '10:0', label: '0~1.0' },
 ]
+
+const authStore = useAuthStore()
+const currentUserId = computed(() => authStore.user?.id ?? 0)
 
 const items = ref<DoubanId[]>([])
 const total = ref(0)

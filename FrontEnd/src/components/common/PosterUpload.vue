@@ -44,10 +44,10 @@
           :output-type="'webp'"
           :output-size="0.8"
           :auto-crop="true"
-          :auto-crop-width="640"
-          :auto-crop-height="360"
+          :auto-crop-width="400"
+          :auto-crop-height="600"
           :fixed="true"
-          :fixed-number="[16,9]"
+          :fixed-number="[2,3]"
           :center-box="true"
           :info="true"
           :can-move="true"
@@ -229,7 +229,7 @@ const resetCropper = () => {
 }
 
 .cropper-container {
-  height: 360px;
+  height: 500px;
 }
 
 .upload-error {

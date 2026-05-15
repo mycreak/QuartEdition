@@ -82,6 +82,54 @@ class PeopleRead(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class PeopleReadExt(PeopleRead):
+    """人员扩展读出，含管理员和重名字段"""
+    admin_id: int = Field(0, description="录入管理员ID，0为爬虫录入")
+    is_duplicate: int = Field(0, description="重名标记：0无/已确认，1待确认，-1无效")
+
+
+class AddCreditManualRequest(BaseModel):
+    """手动新增演职人员关联入参"""
+    name: str = Field(..., min_length=1, max_length=128, description="人员姓名")
+    douban_id: Optional[str] = Field(None, max_length=64, description="豆瓣人员ID，可选")
+    role_type: RoleType = Field(..., description="角色类型")
+
+
+class DuplicatePersonItem(BaseModel):
+    """重名人员列表条目"""
+    id: int = Field(..., description="重名记录ID")
+    name: str = Field(..., description="重名姓名")
+    person_id1: int = Field(..., description="人员1ID")
+    person_name1: str = Field(..., description="人员1姓名")
+    person_id2: int = Field(..., description="人员2ID")
+    person_name2: str = Field(..., description="人员2姓名")
+    created_at: datetime = Field(..., description="记录创建时间")
+
+
+class PersonMovieItem(BaseModel):
+    """人员关联电影条目"""
+    movie_id: int = Field(..., description="电影ID")
+    title: str = Field(..., description="电影名称")
+    poster: Optional[str] = Field(None, description="电影封面URL")
+    year: Optional[int] = Field(None, description="上映年份")
+    regions: List[str] = Field(default_factory=list, description="地区列表")
+    role_type: str = Field(..., description="参演角色类型")
+
+
+class ConfirmNotSameRequest(BaseModel):
+    """确认不是同一人入参"""
+    duplicate_id: int = Field(..., description="重名记录ID")
+    person_id1: int = Field(..., description="人员1ID")
+    person_id2: int = Field(..., description="人员2ID")
+
+
+class MergePersonRequest(BaseModel):
+    """合并人员入参"""
+    duplicate_id: int = Field(..., description="重名记录ID")
+    keep_person_id: int = Field(..., description="保留的人员ID")
+    discard_person_id: int = Field(..., description="废弃的人员ID")
+
+
 # ═══════════════════════════════════════════
 # genres — 不再有独立表，类型字典由 crawl_progress 承载
 # ═══════════════════════════════════════════

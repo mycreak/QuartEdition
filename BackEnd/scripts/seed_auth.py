@@ -183,9 +183,24 @@ SQLS = [
       id          INT           NOT NULL AUTO_INCREMENT,
       name        VARCHAR(128)  NOT NULL,
       douban_id   VARCHAR(64)   DEFAULT NULL,
+      admin_id    INT           NOT NULL DEFAULT 0 COMMENT '录入的管理员ID，0代表爬虫自动录入',
+      is_duplicate TINYINT      NOT NULL DEFAULT 0 COMMENT '重名标记：0=无重名/已确认，1=待确认重名，-1=无效重复记录',
       created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+
+    # duplicate_name 表 — 演职人员重名记录表
+    """CREATE TABLE IF NOT EXISTS duplicate_name (
+      id              INT AUTO_INCREMENT PRIMARY KEY,
+      name            VARCHAR(128) NOT NULL COMMENT '重名姓名',
+      person_id1      INT NOT NULL COMMENT '重名人员ID1（保证person_id1 < person_id2）',
+      person_id2      INT NOT NULL COMMENT '重名人员ID2',
+      is_checked      TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1已处理',
+      created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      checked_at      DATETIME NULL COMMENT '处理时间',
+      operate_admin_id INT NULL COMMENT '处理的管理员ID',
+      UNIQUE KEY uk_pair(person_id1, person_id2) COMMENT '唯一约束，避免同一对重名重复写入'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     # movie_credits 表 — 演职人员关联
@@ -201,7 +216,8 @@ SQLS = [
       id          INT           NOT NULL AUTO_INCREMENT,
       name        VARCHAR(64)   NOT NULL,
       created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (id)
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_regions_name (name) COMMENT '地区名称唯一约束，避免重复国家/地区'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     # movie_regions 表 — 电影地区关联

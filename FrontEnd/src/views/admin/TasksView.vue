@@ -30,12 +30,21 @@
             </template>
 
             <template v-if="taskForm.type === 'review_crawl'">
-      <el-form-item label="豆瓣电影 ID (douban_id)">
-        <el-input v-model="taskForm.douban_id" placeholder="如 1292052" />
-      </el-form-item>
-      <el-form-item label="列表翻页数">
-        <el-input-number v-model="taskForm.pages" :min="1" :max="10" style="width: 100%" />
-      </el-form-item>
+                <el-form-item label="豆瓣电影 ID (douban_id)">
+                  <div class="flex gap-2 items-center">
+                    <el-autocomplete
+                      v-model="taskForm.douban_id"
+                      :fetch-suggestions="queryExistedMovies"
+                      :trigger-on-focus="true"
+                      placeholder="输入豆瓣ID或点击右侧按钮选择电影"
+                      style="flex: 1"
+                      clearable
+                    />
+                    <el-button type="primary" @click="openMovieSelector('review')">
+                      选择电影
+                    </el-button>
+                  </div>
+                </el-form-item>
       <el-form-item label="Cookie 身份">
         <CookieSelector v-model="taskForm.review_cookie_id" />
         <div class="form-hint">选填，不选则使用游客模式</div>
@@ -48,33 +57,52 @@
 
             <template v-if="taskForm.type === 'review_body_crawl'">
               <el-form-item label="选择电影">
-                <el-select
-                  v-model="taskForm.selected_movie_id"
-                  placeholder="选择有未爬长评的电影"
-                  clearable
-                  filterable
-                  style="width: 100%"
-                  :loading="moviesLoading"
-                  @change="onMovieSelect"
-                >
-                  <el-option
-                    v-for="movie in moviesWithPendingReviews"
-                    :key="movie.movie_id"
-                    :label="`${movie.title} (${movie.pending_count}条待爬)`"
-                    :value="movie.movie_id"
+                <div class="flex gap-2">
+                  <el-input
+                    v-model="selectedMovieTitle"
+                    placeholder="点击右侧按钮选择电影"
+                    readonly
+                    style="flex: 1"
                   />
-                </el-select>
+                  <el-button type="primary" @click="movieSelectorVisible = true">
+                    选择电影
+                  </el-button>
+                </div>
+                <div class="form-hint mt-1">支持多维度筛选查找电影，选择后自动加载待爬长评</div>
               </el-form-item>
 
               <!-- 长评列表 -->
               <template v-if="taskForm.selected_movie_id">
                 <el-card style="margin-bottom: 16px;">
                   <template #header>
-                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                       <span>待爬长评列表</span>
                       <el-checkbox v-model="toggleAllCheck" @change="toggleAllReviews">
                         全选当前页
                       </el-checkbox>
+                    </div>
+                    <!-- 筛选栏 -->
+                    <div class="flex gap-2 items-center flex-wrap">
+                      <el-input
+                        v-model="reviewFilters.keyword"
+                        placeholder="搜索评论标题"
+                        clearable
+                        style="width: 200px"
+                        @keyup.enter="fetchPendingReviews(1)"
+                        @clear="fetchPendingReviews(1)"
+                      />
+                      <el-date-picker
+                        v-model="reviewFilters.dateRange"
+                        type="daterange"
+                        range-separator="至"
+                        start-placeholder="开始日期"
+                        end-placeholder="结束日期"
+                        format="YYYY-MM-DD"
+                        value-format="YYYY-MM-DD"
+                        style="width: 300px"
+                        @change="fetchPendingReviews(1)"
+                      />
+                      <el-button @click="resetReviewFilters">重置筛选</el-button>
                     </div>
                   </template>
                   
@@ -143,20 +171,29 @@
             </template>
 
             <template v-if="taskForm.type === 'comment_crawl'">
-              <el-form-item label="豆瓣电影 ID (douban_id)">
-                <el-input v-model="taskForm.douban_id" placeholder="如 1292052" />
-              </el-form-item>
-              <el-form-item label="翻页数">
-                <el-input-number v-model="taskForm.pages" :min="1" :max="10" style="width: 100%" />
-              </el-form-item>
+                <el-form-item label="豆瓣电影 ID (douban_id)">
+                  <div class="flex gap-2 items-center">
+                    <el-autocomplete
+                      v-model="taskForm.douban_id"
+                      :fetch-suggestions="queryExistedMovies"
+                      :trigger-on-focus="true"
+                      placeholder="输入豆瓣ID或点击右侧按钮选择电影"
+                      style="flex: 1"
+                      clearable
+                    />
+                    <el-button type="primary" @click="openMovieSelector('comment')">
+                      选择电影
+                    </el-button>
+                  </div>
+                </el-form-item>
               <el-form-item label="Cookie 身份">
                 <CookieSelector v-model="taskForm.comment_cookie_id" />
                 <div class="form-hint">选填，不选则使用游客模式</div>
               </el-form-item>
               <el-form-item label="代理">
-                <ProxySelector v-model="taskForm.comment_proxy_key" />
-                <div class="form-hint">选填，不选则使用直连</div>
-              </el-form-item>
+        <ProxySelector v-model="taskForm.comment_proxy_key" />
+        <div class="form-hint">选填，不选则使用直连</div>
+      </el-form-item>
             </template>
 
             <el-form-item v-if="taskForm.type">
@@ -302,6 +339,12 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- 电影选择弹窗 -->
+    <MovieSelector
+      v-model="movieSelectorVisible"
+      @select="onMovieSelected($event)"
+    />
+
     <el-dialog v-model="histDetailVisible" title="任务历史详情" width="520px">
       <div v-if="histDetail" class="detail-grid">
         <div class="detail-row"><span class="detail-key">任务 ID</span><span class="detail-value">{{ histDetail.id }}</span></div>
@@ -338,10 +381,12 @@ import { adminQueueApi } from '@/api/admin/monitor'
 import { adminDoubanIdsApi } from '@/api/admin/douban_ids'
 import { adminCookieApi, type CookieAccount } from '@/api/admin/infra'
 import { adminMoviesApi } from '@/api/admin/movies'
-import ProxySelector from '@/components/common/ProxySelector.vue'
 import CookieSelector from '@/components/common/CookieSelector.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
+import MovieSelector from '@/components/common/MovieSelector.vue'
 import type { QueueStatus } from '@/types/status'
 import type { MovieWithPendingReviews, PendingReview, TaskSubmitResponse } from '@/types/task'
+import type { Movie } from '@/types/movie'
 
 const authStore = useAuthStore()
 
@@ -382,7 +427,7 @@ const taskForm = reactive({
   type_num: 11,
   interval_id: '100:90',
   douban_id: '',
-  pages: 2, // comment_crawl 保留翻页参数
+  pages: 2, // review_crawl 翻页参数
   scrape_douban_id: '',
   scrape_cookie_id: '',
   scrape_proxy_key: '',
@@ -395,6 +440,10 @@ const taskForm = reactive({
   selected_movie_id: null as number | null,
 })
 
+// 电影选择弹窗相关
+const movieSelectorVisible = ref(false)
+const selectedMovieTitle = ref('')
+
 // 批量长评相关状态
 const moviesWithPendingReviews = ref<MovieWithPendingReviews[]>([])
 const moviesLoading = ref(false)
@@ -404,6 +453,11 @@ const selectedReviewIds = ref<string[]>([])
 const pendingReviewsPage = ref(1)
 const pendingReviewsTotal = ref(0)
 const pendingReviewsPageSize = 10
+// 长评筛选参数
+const reviewFilters = ref({
+  keyword: '',
+  dateRange: [] as string[]
+})
 
 const queue = reactive<QueueStatus>({
   redis_size: 0,
@@ -638,6 +692,48 @@ function onDoubanIdSelect(item: { value: string; label: string }) {
   taskForm.scrape_douban_id = item.value
 }
 
+// 搜索已入库电影（自动提示）
+async function queryExistedMovies(query: string, callback: any) {
+  if (!query) {
+    callback([])
+    return
+  }
+  try {
+    const res = await adminMoviesApi.searchMovies(query)
+    const suggestions = res.data.items.map(movie => ({
+      value: movie.douban_id,
+      label: `${movie.title} (ID: ${movie.douban_id})`
+    }))
+    callback(suggestions)
+  } catch {
+    callback([])
+  }
+}
+
+// 打开电影选择器的场景
+const movieSelectScene = ref<'review' | 'comment' | 'review_body'>('review')
+
+// 打开电影选择弹窗
+function openMovieSelector(scene: 'review' | 'comment' | 'review_body') {
+  movieSelectScene.value = scene
+  movieSelectorVisible.value = true
+}
+
+// 电影选择回调
+function onMovieSelected(movie: Movie | undefined) {
+  if (!movie) return
+  if (movieSelectScene.value === 'review_body') {
+    // 长评正文抓取场景
+    taskForm.selected_movie_id = movie.id
+    selectedMovieTitle.value = movie.title
+    // 自动加载该电影的待爬长评
+    fetchPendingReviews(1)
+  } else {
+    // 长评/短评列表抓取场景
+    taskForm.douban_id = movie.douban_id
+  }
+}
+
 // 批量长评相关函数
 async function fetchMoviesWithPendingReviews() {
   moviesLoading.value = true
@@ -656,9 +752,18 @@ async function fetchPendingReviews(page = 1) {
   
   pendingReviewsLoading.value = true
   try {
+    const params: any = { page, page_size: pendingReviewsPageSize }
+    // 携带筛选参数
+    if (reviewFilters.value.keyword.trim()) {
+      params.keyword = reviewFilters.value.keyword.trim()
+    }
+    if (reviewFilters.value.dateRange?.length === 2) {
+      params.start_date = reviewFilters.value.dateRange[0]
+      params.end_date = reviewFilters.value.dateRange[1]
+    }
     const res = await adminMoviesApi.getPendingReviews(
       taskForm.selected_movie_id,
-      { page, page_size: pendingReviewsPageSize }
+      params
     )
     pendingReviews.value = res.data.items || []
     pendingReviewsTotal.value = res.data.total
@@ -668,6 +773,15 @@ async function fetchPendingReviews(page = 1) {
   } finally {
     pendingReviewsLoading.value = false
   }
+}
+
+// 重置长评筛选
+function resetReviewFilters() {
+  reviewFilters.value = {
+    keyword: '',
+    dateRange: []
+  }
+  fetchPendingReviews(1)
 }
 
 function onMovieSelect() {
@@ -724,7 +838,6 @@ async function submitTask() {
         break
       case 'comment_crawl':
         payload.douban_id = taskForm.douban_id
-        payload.pages = taskForm.pages
         if (taskForm.comment_cookie_id) payload.cookie_id = taskForm.comment_cookie_id
         if (taskForm.comment_proxy_key) payload.proxy_key = taskForm.comment_proxy_key
         break

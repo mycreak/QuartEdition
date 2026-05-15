@@ -14,7 +14,7 @@
     <el-option
       v-for="proxy in proxyOptions"
       :key="proxy.id"
-      :label="`${proxy.label} (${proxy.region})`"
+      :label="proxy.region ? `${proxy.label} (${proxy.region})` : proxy.label"
       :value="proxy.key"
     />
   </el-select>

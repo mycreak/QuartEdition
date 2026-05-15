@@ -417,12 +417,26 @@ class MovieService:
             mid = g["movie_id"]
             genre_map.setdefault(mid, []).append(g["type_name"])
 
+        # 批量查询关联地区
+        region_map = {}
+        region_rows = await self.db.execute_raw(
+            f"""SELECT mr.movie_id, r.id, r.name
+                FROM movie_regions mr
+                JOIN regions r ON mr.region_id = r.id
+                WHERE mr.movie_id IN ({placeholders})""",
+            id_params,
+        )
+        for r in region_rows:
+            mid = r["movie_id"]
+            region_map.setdefault(mid, []).append({"id": r["id"], "name": r["name"]})
+
         items = []
         for r in rows:
             mid = r["id"]
             item = dict(r)
             item["rating"] = rating_map.get(mid)
             item["genres"] = genre_map.get(mid, [])
+            item["regions"] = region_map.get(mid, [])
             items.append(item)
 
         return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -464,14 +478,14 @@ class MovieService:
 
     # ==================== 角色关联管理 ====================
 
-    async def add_credit(self, movie_id: int, person_id: int, role_type: str, changed_by: str = "") -> int:
+    async def add_credit(self, movie_id: int, person_id: int, role_type: str, changed_by: str = "", tx=None) -> int:
         """
-        输入：movie_id + person_id + role_type("director"/"actor"), changed_by
+        输入：movie_id + person_id + role_type("director"/"actor"), changed_by, tx可选事务
         输出：插入数量（1）
         副作用：INSERT INTO movie_credits + movie_credits_history（同一事务）
         """
-        async with self.db.transaction() as tx:
-            result = await tx.execute_raw(
+        async def _exec(_tx):
+            result = await _tx.execute_raw(
                 "INSERT IGNORE INTO `movie_credits` (movie_id, person_id, role_type) "
                 "VALUES (%s, %s, %s)",
                 (movie_id, person_id, role_type),
@@ -480,9 +494,15 @@ class MovieService:
                 "movie_credits",
                 {"movie_id": movie_id, "person_id": person_id},
                 {"role_type": role_type},
-                "create", changed_by, tx=tx,
+                "create", changed_by, tx=_tx,
             )
-        return result
+            return result
+
+        if tx:
+            return await _exec(tx)
+        else:
+            async with self.db.transaction() as new_tx:
+                return await _exec(new_tx)
 
     async def remove_credit(self, movie_id: int, person_id: int, role_type: str, changed_by: str = "") -> int:
         """
@@ -498,18 +518,101 @@ class MovieService:
                 "delete", changed_by, tx=tx,
             )
             return await tx.delete("movie_credits", {
-                "movie_id": movie_id, "person_id": person_id,
-                "role_type": role_type,
+                "movie_id": movie_id, "person_id": person_id, "role_type": role_type,
             })
+
+    async def add_credit_manual(self, movie_id: int, name: str, role_type: str, admin_id: int, douban_id: str = None) -> int:
+        """
+        手动新增演职人员并关联电影，含重名检测逻辑
+        输入：
+            movie_id: 电影ID
+            name: 人员姓名
+            role_type: 角色类型
+            admin_id: 操作管理员ID
+            douban_id: 豆瓣人员ID（可选）
+        输出：新人员ID
+        异常：业务异常
+        """
+        # 先校验电影是否存在
+        movie = await self.get_movie(movie_id)
+        if not movie:
+            raise ResourceNotFoundError(f"电影不存在: {movie_id}")
+
+        person_id = None
+        # 有豆瓣ID优先匹配
+        if douban_id:
+            exists = await self.db.execute_raw(
+                "SELECT id FROM people WHERE douban_id = %s AND is_duplicate != -1 LIMIT 1",
+                (douban_id,)
+            )
+            if exists:
+                person_id = exists[0]["id"]
+
+        # 匹配到已有人员，直接关联
+        if person_id:
+            await self.add_credit(movie_id, person_id, role_type, str(admin_id))
+            return person_id
+
+        # 没匹配到，新增人员
+        name = name.strip()
+        # 先查重名（排除无效人员）
+        duplicate_persons = await self.db.execute_raw(
+            "SELECT id, name FROM people WHERE name = %s AND is_duplicate != -1",
+            (name,)
+        )
+
+        async with self.db.transaction() as tx:
+            # 1. 插入新人员
+            new_person_id = await tx.insert(
+                "people",
+                {
+                    "name": name,
+                    "douban_id": douban_id,
+                    "admin_id": admin_id,
+                    "is_duplicate": 0
+                }
+            )
+
+            # 2. 如果有重名，更新标记并写入重名表
+            if duplicate_persons:
+                # 收集所有重名人员ID，包含新人员
+                all_ids = [p["id"] for p in duplicate_persons] + [new_person_id]
+                # 所有重名人员标记为待处理
+                await tx.execute_raw(
+                    f"UPDATE people SET is_duplicate = 1 WHERE id IN ({','.join(['%s'] * len(all_ids))})",
+                    tuple(all_ids)
+                )
+                # 两两组合插入重名表，保证person_id1 < person_id2，用INSERT IGNORE避免重复
+                for i in range(len(all_ids)):
+                    for j in range(i + 1, len(all_ids)):
+                        id1 = min(all_ids[i], all_ids[j])
+                        id2 = max(all_ids[i], all_ids[j])
+                        await tx.execute_raw(
+                            "INSERT IGNORE INTO duplicate_name (name, person_id1, person_id2) VALUES (%s, %s, %s)",
+                            (name, id1, id2)
+                        )
+
+            # 3. 关联电影
+            await self.add_credit(movie_id, new_person_id, role_type, str(admin_id), tx=tx)
+
+        return new_person_id
 
     # ==================== 类型关联管理（type_num → crawl_progress）====================
 
     async def add_genre_to_movie(self, movie_id: int, type_num: int, changed_by: str = "") -> int:
         """
         输入：movie_id + type_num（豆瓣类型编号）, changed_by
-        输出：插入数量
+        输出：插入数量，0表示已存在
         副作用：INSERT INTO movie_genres + movie_genres_history（同一事务）
         """
+        # 兜底校验：防止重复添加
+        exists = await self.db.execute_raw(
+            "SELECT 1 FROM movie_genres WHERE movie_id = %s AND type_num = %s LIMIT 1",
+            (movie_id, type_num)
+        )
+        if exists:
+            return 0
+            
         async with self.db.transaction() as tx:
             result = await tx.insert("movie_genres", {
                 "movie_id": movie_id,
@@ -543,9 +646,17 @@ class MovieService:
     async def add_region_to_movie(self, movie_id: int, region_id: int, changed_by: str = "") -> int:
         """
         输入：movie_id + region_id, changed_by
-        输出：插入数量
+        输出：插入数量，0表示已存在
         副作用：INSERT INTO movie_regions + movie_regions_history（同一事务）
         """
+        # 兜底校验：防止重复添加
+        exists = await self.db.execute_raw(
+            "SELECT 1 FROM movie_regions WHERE movie_id = %s AND region_id = %s LIMIT 1",
+            (movie_id, region_id)
+        )
+        if exists:
+            return 0
+            
         async with self.db.transaction() as tx:
             result = await tx.insert("movie_regions", {
                 "movie_id": movie_id,
@@ -575,6 +686,137 @@ class MovieService:
             })
 
     # ==================== 复合查询（核心价值）====================
+
+    # ==================== 重名人员管理 ====================
+    async def get_duplicate_person_list(self, page: int = 1, page_size: int = 20) -> tuple[list, int]:
+        """
+        重名人员待处理列表，分页
+        输出：(列表数据, 总条数)
+        """
+        offset = (page - 1) * page_size
+        # 关联查询人员姓名
+        count_sql = "SELECT COUNT(*) AS total FROM duplicate_name WHERE is_checked = 0"
+        count_res = await self.db.execute_raw(count_sql)
+        total = count_res[0]["total"] if count_res else 0
+
+        list_sql = """
+            SELECT 
+                d.id, 
+                d.name, 
+                d.person_id1, 
+                p1.name AS person_name1, 
+                d.person_id2, 
+                p2.name AS person_name2, 
+                d.created_at
+            FROM duplicate_name d
+            LEFT JOIN people p1 ON d.person_id1 = p1.id
+            LEFT JOIN people p2 ON d.person_id2 = p2.id
+            WHERE d.is_checked = 0
+            ORDER BY d.created_at DESC
+            LIMIT %s OFFSET %s
+        """
+        list_res = await self.db.execute_raw(list_sql, (page_size, offset))
+        return list_res, total
+
+    async def get_person_movies(self, person_id: int) -> list:
+        """
+        查询人员关联的所有电影，含基础信息和角色
+        输入：person_id
+        输出：电影列表
+        """
+        sql = """
+            SELECT 
+                mc.movie_id,
+                m.title,
+                m.poster_url AS poster,
+                m.release_year AS year,
+                mc.role_type,
+                GROUP_CONCAT(r.name SEPARATOR '||') AS region_names
+            FROM movie_credits mc
+            JOIN movies m ON mc.movie_id = m.id
+            LEFT JOIN movie_regions mr ON m.id = mr.movie_id
+            LEFT JOIN regions r ON mr.region_id = r.id
+            WHERE mc.person_id = %s
+            GROUP BY mc.movie_id, mc.role_type
+            ORDER BY m.release_year DESC
+        """
+        rows = await self.db.execute_raw(sql, (person_id,))
+        result = []
+        for row in rows:
+            regions = []
+            if row["region_names"]:
+                regions = row["region_names"].split("||")
+            result.append({
+                "movie_id": row["movie_id"],
+                "title": row["title"],
+                "poster": row["poster"],
+                "year": row["year"],
+                "regions": regions,
+                "role_type": row["role_type"]
+            })
+        return result
+
+    async def confirm_not_same(self, duplicate_id: int, person_id1: int, person_id2: int, admin_id: int) -> bool:
+        """
+        确认两个重名人员不是同一人
+        输入：duplicate_id, person_id1, person_id2, admin_id
+        输出：是否成功
+        """
+        async with self.db.transaction() as tx:
+            # 1. 更新两个人员的重名标记为已确认
+            await tx.execute_raw(
+                "UPDATE people SET is_duplicate = 0 WHERE id IN (%s, %s)",
+                (person_id1, person_id2)
+            )
+            # 2. 标记重名记录为已处理
+            await tx.execute_raw(
+                "UPDATE duplicate_name SET is_checked = 1, checked_at = NOW(), operate_admin_id = %s WHERE id = %s",
+                (admin_id, duplicate_id)
+            )
+        return True
+
+    async def merge_person(self, duplicate_id: int, keep_person_id: int, discard_person_id: int, admin_id: int) -> bool:
+        """
+        合并两个重名人员，废弃的人员标记为无效，关联迁移到保留人员
+        输入：duplicate_id, keep_person_id, discard_person_id, admin_id
+        输出：是否成功
+        """
+        if keep_person_id == discard_person_id:
+            raise ValueError("保留和废弃人员不能为同一人")
+
+        # 校验两个人员都存在
+        keep_exists = await self.db.execute_raw("SELECT 1 FROM people WHERE id = %s", (keep_person_id,))
+        discard_exists = await self.db.execute_raw("SELECT 1 FROM people WHERE id = %s", (discard_person_id,))
+        if not keep_exists or not discard_exists:
+            raise ResourceNotFoundError("人员不存在")
+
+        async with self.db.transaction() as tx:
+            # 1. 标记废弃人员为无效
+            await tx.execute_raw(
+                "UPDATE people SET is_duplicate = -1 WHERE id = %s",
+                (discard_person_id,)
+            )
+            # 2. 迁移movie_credits关联：先INSERT IGNORE到保留人员，再删除废弃人员的关联
+            await tx.execute_raw(
+                """
+                INSERT IGNORE INTO movie_credits (movie_id, person_id, role_type)
+                SELECT movie_id, %s AS person_id, role_type FROM movie_credits WHERE person_id = %s
+                """,
+                (keep_person_id, discard_person_id)
+            )
+            # 删除废弃人员的所有关联
+            await tx.execute_raw("DELETE FROM movie_credits WHERE person_id = %s", (discard_person_id,))
+            # 3. 标记重名记录为已处理
+            await tx.execute_raw(
+                "UPDATE duplicate_name SET is_checked = 1, checked_at = NOW(), operate_admin_id = %s WHERE id = %s",
+                (admin_id, duplicate_id)
+            )
+            # 4. 标记保留人员为已确认
+            await tx.execute_raw(
+                "UPDATE people SET is_duplicate = 0 WHERE id = %s",
+                (keep_person_id,)
+            )
+        return True
 
     async def get_movie_detail(self, movie_id: int) -> MovieDetail:
         """

@@ -130,20 +130,22 @@ async def _find_or_create_person(db_layer, name: str, douban_id: str = "") -> Op
 
     name = name.strip()
 
-    # 优先按 douban_id 查找
+    # 优先按 douban_id 查找（过滤无效人员）
     if douban_id:
-        person = await _safe_execute(
+        rows = await _safe_execute(
             f"按 douban_id 查找人员 '{douban_id}'",
-            db_layer.find_one("people", {"douban_id": douban_id})
+            db_layer.execute_raw("SELECT * FROM people WHERE douban_id = %s AND is_duplicate != -1 LIMIT 1", (douban_id,))
         )
+        person = rows[0] if rows else None
         if person:
             return person["id"]
 
-    # 按 name 查找
-    person = await _safe_execute(
+    # 按 name 查找（过滤无效人员）
+    rows = await _safe_execute(
         f"查找人员 '{name}'",
-        db_layer.find_one("people", {"name": name})
+        db_layer.execute_raw("SELECT * FROM people WHERE name = %s AND is_duplicate != -1 LIMIT 1", (name,))
     )
+    person = rows[0] if rows else None
     if person:
         # 如果已有记录没有 douban_id，补充
         if douban_id and not person.get("douban_id"):
@@ -586,11 +588,15 @@ async def _find_or_create_person_in_tx(tx, name: str, douban_id: str = "") -> Op
     name = name.strip()
 
     if douban_id:
-        existing = await tx.find_one("people", {"douban_id": douban_id})
+        # 优先按 douban_id 查找（过滤无效人员）
+        rows = await tx.execute_raw("SELECT * FROM people WHERE douban_id = %s AND is_duplicate != -1 LIMIT 1", (douban_id,))
+        existing = rows[0] if rows else None
         if existing:
             return existing["id"]
 
-    existing = await tx.find_one("people", {"name": name})
+    # 按 name 查找（过滤无效人员）
+    rows = await tx.execute_raw("SELECT * FROM people WHERE name = %s AND is_duplicate != -1 LIMIT 1", (name,))
+    existing = rows[0] if rows else None
     if existing:
         if douban_id and not existing.get("douban_id"):
             await tx.update("people", {"id": existing["id"]}, {"douban_id": douban_id})
