@@ -36,3 +36,10 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# 忽略大文件
+all_images.zip
+all_images.tar
+*.zip
+*.tar
+*.tar.gz
