@@ -54,6 +54,21 @@ logger = logging.getLogger(__name__)
 DOUBAN_ABUSE_MARKER = "检测到有异常请求"
 
 
+def _build_proxy_config(proxy: Proxy) -> dict:
+    """
+    根据 Proxy 对象构建 Playwright 的 proxy 参数字典。
+
+    输入：Proxy 对象
+    输出：{server, username?, password?}
+    """
+    config = {"server": f"http://{proxy.host}:{proxy.port}"}
+    if proxy.username:
+        config["username"] = proxy.username
+    if proxy.password:
+        config["password"] = proxy.password
+    return config
+
+
 class FetcherError(Exception):
     """爬取失败 — 所有方式（代理 / 直连）均不可用。"""
 
@@ -206,7 +221,7 @@ class BrowserFetcher:
         副作用：
             创建/关闭 browser context 和 page
         """
-        proxy_config = {"server": f"http://{proxy.host}:{proxy.port}"}
+        proxy_config = _build_proxy_config(proxy)
         return await self._do_fetch(url, proxy_config)
 
     async def _fetch_direct(self, url: str) -> tuple[str, bool]:
@@ -415,7 +430,7 @@ class BrowserFetcher:
 
     async def _fetch_review_body_with_proxy(self, url: str, proxy: Proxy, cfg) -> str:
         """通过指定代理获取长评，失败则切换或直连。"""
-        proxy_config = {"server": f"http://{proxy.host}:{proxy.port}"}
+        proxy_config = _build_proxy_config(proxy)
         try:
             html = await self._do_fetch_review_body(url, proxy_config=proxy_config, cfg=cfg)
             await self.proxy_pool.report_success(proxy)
@@ -426,7 +441,7 @@ class BrowserFetcher:
                 next_proxy = await self.proxy_pool.get_proxy()
                 if next_proxy is None:
                     break
-                proxy_config = {"server": f"http://{next_proxy.host}:{next_proxy.port}"}
+                proxy_config = _build_proxy_config(next_proxy)
                 try:
                     html = await self._do_fetch_review_body(url, proxy_config=proxy_config, cfg=cfg)
                     await self.proxy_pool.report_success(next_proxy)

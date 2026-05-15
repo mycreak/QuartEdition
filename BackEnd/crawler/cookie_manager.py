@@ -30,6 +30,7 @@ import asyncio
 import shutil
 import time as _time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,11 @@ def _write_json_metadata(path: str, data: dict) -> None:
 
 @dataclass
 class Account:
-    """单个豆瓣账号。"""
+    """
+    单个豆瓣账号。
+
+    v2 — 新增 remark/platform/enabled/usage_count，供管理端展示和过滤。
+    """
     id: str
     label: str = ""
     file: str = ""
@@ -67,6 +72,10 @@ class Account:
     last_used_at: float = 0.0
     fail_count: int = 0
     success_count: int = 0
+    remark: str = ""
+    platform: str = "douban"
+    enabled: bool = True
+    usage_count: int = 0
 
     @property
     def storage_state(self) -> dict:
@@ -140,6 +149,10 @@ class CookieManager:
                 last_used_at=item.get("last_used_at", 0.0),
                 fail_count=item.get("fail_count", 0),
                 success_count=item.get("success_count", 0),
+                remark=item.get("remark", ""),
+                platform=item.get("platform", "douban"),
+                enabled=item.get("enabled", True),
+                usage_count=item.get("usage_count", 0),
             )
             if acc.id:
                 self._accounts[acc.id] = acc
@@ -197,6 +210,10 @@ class CookieManager:
                     "last_used_at": a.last_used_at,
                     "fail_count": a.fail_count,
                     "success_count": a.success_count,
+                    "remark": a.remark,
+                    "platform": a.platform,
+                    "enabled": a.enabled,
+                    "usage_count": a.usage_count,
                 }
                 for a in self._accounts.values()
             ],
@@ -237,6 +254,7 @@ class CookieManager:
             return
         acc.last_used_at = _time.time()
         acc.success_count += 1
+        acc.usage_count += 1
         acc.fail_count = 0
         if acc.state == "suspicious":
             acc.state = "active"
@@ -275,20 +293,46 @@ class CookieManager:
         return stats
 
     def list_all(self) -> list[dict]:
-        """所有账号详情。"""
+        """所有账号详情，时间戳转为 ISO 字符串对齐前端。"""
+        def _ts_iso(ts: float) -> str:
+            if not ts or ts <= 0:
+                return ""
+            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
         return [
             {
                 "id": a.id,
                 "label": a.label,
+                "remark": a.remark,
+                "platform": a.platform,
+                "enabled": a.enabled,
                 "allowed_regions": a.allowed_regions,
                 "dbcl2_preview": a.dbcl2_preview,
                 "saved_at": a.saved_at,
                 "state": a.state,
-                "last_used_at": a.last_used_at,
+                "last_used_at": _ts_iso(a.last_used_at),
+                "usage_count": a.usage_count,
                 "fail_count": a.fail_count,
                 "success_count": a.success_count,
             }
             for a in self._accounts.values()
+        ]
+
+    def options_list(self) -> list[dict]:
+        """
+        供管理端下拉选择器使用的精简列表（仅 active + enabled 账号）。
+
+        输出：[{id, label, platform, allowed_regions}, ...]
+        """
+        return [
+            {
+                "id": a.id,
+                "label": a.label,
+                "platform": a.platform,
+                "allowed_regions": a.allowed_regions,
+            }
+            for a in self._accounts.values()
+            if a.state == "active" and a.enabled
         ]
 
     # ── 增删改 ──
@@ -299,16 +343,17 @@ class CookieManager:
         allowed_regions: List[str],
         bid: str = "",
         label: str = "",
+        remark: str = "",
+        platform: str = "douban",
         account_id: str = "",
     ) -> str:
         """
         新增账号。
 
-        输入：dbcl2, allowed_regions, bid（可选）, label（可选）, account_id（可选）
+        输入：dbcl2, allowed_regions, bid（可选）, label（可选）, remark（可选）, platform（可选）, account_id（可选）
         输出：新建的 account_id
         副作用：写入 metadata.json + account_xxx.json
         """
-        from datetime import datetime, timezone, timedelta
         CST = timezone(timedelta(hours=8))
 
         if not account_id:
@@ -357,6 +402,8 @@ class CookieManager:
             dbcl2_preview=dbcl2[:8] + "...",
             saved_at=saved_at,
             state="active",
+            remark=remark,
+            platform=platform,
         )
         self._accounts[account_id] = acc
         await self._save_metadata()
@@ -380,6 +427,99 @@ class CookieManager:
         await self._save_metadata()
         logger.info(f"账号已删除: {account_id}")
         return True
+
+    async def update_account(self, account_id: str, **kwargs) -> bool:
+        """
+        按 ID 更新账号属性。
+
+        输入：account_id + 任意关键字参数
+             可更新字段: label, remark, platform, enabled, allowed_regions
+        输出：True=成功, False=不存在
+        """
+        acc = self._accounts.get(account_id)
+        if acc is None:
+            return False
+        updatable = {"label", "remark", "platform", "enabled", "allowed_regions"}
+        for field, value in kwargs.items():
+            if field in updatable:
+                setattr(acc, field, value)
+        await self._save_metadata()
+        logger.info(f"账号已更新: {account_id} fields={list(kwargs.keys())}")
+        return True
+
+    async def verify_account(self, account_id: str) -> dict:
+        """
+        验证 Cookie 账号是否仍有效（通过访问豆瓣检测是否被重定向到登录页）。
+
+        输入：account_id
+        输出：{"success": bool, "message": str, "error_type": str, "cookies_count": int}
+        """
+        acc = self._accounts.get(account_id)
+        if acc is None:
+            return {"success": False, "message": "账号不存在", "error_type": "NotFound"}
+
+        try:
+            import aiohttp
+        except ImportError:
+            return {"success": False, "message": "aiohttp 未安装", "error_type": "ImportError"}
+
+        try:
+            from yarl import URL
+        except ImportError:
+            return {"success": False, "message": "yarl 未安装（aiohttp 依赖缺失）", "error_type": "ImportError"}
+
+        storage = acc.storage_state
+        cookies_list = storage.get("cookies", [])
+
+        try:
+            jar = aiohttp.CookieJar()
+            for c in cookies_list:
+                jar.update_cookies(
+                    {c["name"]: c.get("value", "")},
+                    URL("https://movie.douban.com"),
+                )
+            async with aiohttp.ClientSession(cookie_jar=jar) as session:
+                async with session.get(
+                    "https://movie.douban.com/",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    allow_redirects=False,
+                ) as resp:
+                    if resp.status in (301, 302):
+                        location = resp.headers.get("Location", "")
+                        if "login" in location.lower():
+                            return {
+                                "success": False,
+                                "message": "Cookie 已过期，被重定向到登录页",
+                                "error_type": "CookieExpired",
+                                "cookies_count": len(cookies_list),
+                            }
+                    if resp.status == 200:
+                        return {
+                            "success": True,
+                            "message": "Cookie 有效，账号正常",
+                            "cookies_count": len(cookies_list),
+                        }
+                    return {
+                        "success": False,
+                        "message": f"异常状态码: {resp.status}",
+                        "error_type": "UnexpectedStatus",
+                        "cookies_count": len(cookies_list),
+                    }
+        except aiohttp.ClientError as e:
+            return {
+                "success": False,
+                "message": f"HTTP 请求失败: {e}",
+                "error_type": type(e).__name__,
+                "cookies_count": len(cookies_list),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"验证异常: {type(e).__name__}: {e}",
+                "error_type": type(e).__name__,
+                "cookies_count": len(cookies_list),
+            }
 
     async def set_account_state(self, account_id: str, state: str) -> bool:
         """

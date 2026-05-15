@@ -1,6 +1,9 @@
 <template>
   <div class="admin-profile-page">
-    <h2 class="page-title">个人中心</h2>
+    <div class="page-header">
+      <h2 class="page-title">个人中心</h2>
+      <el-button :icon="HomeFilled" @click="router.push('/')">返回首页</el-button>
+    </div>
 
     <el-row gutter="20">
       <!-- 基础信息卡片（复用普通用户页面逻辑） -->
@@ -31,11 +34,6 @@
               <el-input v-model="form.display_name" placeholder="请输入昵称" maxlength="64" show-word-limit />
             </el-form-item>
 
-            <!-- 角色 -->
-            <el-form-item label="角色">
-              <el-tag type="danger">管理员</el-tag>
-            </el-form-item>
-
             <!-- 权限列表 -->
             <el-form-item label="我的权限" v-if="form.permissions.length">
               <div class="permissions-list">
@@ -56,7 +54,6 @@
               <el-button type="primary" @click="handleSubmit" :loading="loading">
                 保存修改
               </el-button>
-              <el-button @click="handleReset">重置</el-button>
             </el-form-item>
           </el-form>
         </el-card>
@@ -130,14 +127,17 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { updateProfile } from '@/api/profile'
-import { User, VideoCamera, ChatLineRound, SetUp, Tools } from '@element-plus/icons-vue'
+import { getPermissionShortName } from '@/utils/permission'
+import { User, VideoCamera, ChatLineRound, SetUp, Tools, HomeFilled } from '@element-plus/icons-vue'
 import AvatarUpload from '@/components/common/AvatarUpload.vue'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const formRef = ref<FormInstance | null>(null)
 const loading = ref(false)
 
@@ -145,7 +145,6 @@ const form = reactive({
   username: '',
   display_name: '',
   avatar_url: '',
-  role: 'admin' as const,
   permissions: [] as string[]
 })
 
@@ -156,19 +155,8 @@ const rules: FormRules = {
   ]
 }
 
-/** 格式化权限名称 */
-const formatPermissionName = (perm: string) => {
-  const permMap: Record<string, string> = {
-    'user:manage': '用户管理',
-    'movie:read': '电影查看',
-    'comment:read': '评论查看',
-    'crawler:task:write': '爬虫任务提交',
-    'crawler:task:read': '爬虫任务查看',
-    'crawler:failure:manage': '失败任务管理',
-    'system:monitor': '系统监控'
-  }
-  return permMap[perm] || perm
-}
+/** 格式化权限名称 — 从集中化 PERMISSION_DESCRIPTIONS 提取短名称 */
+const formatPermissionName = getPermissionShortName
 
 /** 初始化表单数据 */
 const initForm = () => {
@@ -211,12 +199,6 @@ const handleSubmit = async () => {
   })
 }
 
-/** 重置表单 */
-const handleReset = () => {
-  initForm()
-  formRef.value?.resetFields()
-}
-
 onMounted(() => {
   initForm()
 })
@@ -229,10 +211,17 @@ onMounted(() => {
   padding: 30px;
 }
 
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
 .page-title {
   font-size: 24px;
   color: #1a1a2e;
-  margin-bottom: 20px;
+  margin: 0;
 }
 
 .profile-card,

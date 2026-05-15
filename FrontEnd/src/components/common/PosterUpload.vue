@@ -1,30 +1,27 @@
 <template>
-  <div class="avatar-upload">
-    <!-- 头像预览 -->
-    <div class="avatar-preview" @click="handleSelectFile">
+  <div class="poster-upload">
+    <div class="poster-preview" @click="handleSelectFile">
       <el-image
         v-if="previewUrl"
         :src="previewUrl"
-        fit="cover"
-        class="avatar-img"
+        fit="contain"
+        class="poster-img"
       >
         <template #error>
-          <div class="avatar-placeholder">
-            <el-icon :size="40"><User /></el-icon>
+          <div class="poster-placeholder">
+            <el-icon :size="40"><PictureFilled /></el-icon>
           </div>
         </template>
       </el-image>
-      <div v-else class="avatar-placeholder">
-        <el-icon :size="40" v-if="!loading"><User /></el-icon>
-        <el-icon v-else :size="40" class="is-rotating"><Loading /></el-icon>
+      <div v-else class="poster-placeholder">
+        <el-icon :size="40"><PictureFilled /></el-icon>
       </div>
-      <div class="avatar-mask">
-        <el-icon :size="20"><Camera /></el-icon>
-        <span>{{ loading ? '上传中' : '更换头像' }}</span>
+      <div class="poster-mask">
+        <el-icon :size="20"><Upload /></el-icon>
+        <span>{{ uploading ? '上传中' : '更换海报' }}</span>
       </div>
     </div>
 
-    <!-- 隐藏的原生文件选择器 -->
     <input
       ref="fileInputRef"
       type="file"
@@ -33,11 +30,10 @@
       @change="handleFileChange"
     />
 
-    <!-- 裁剪弹窗 -->
     <el-dialog
       v-model="cropperVisible"
-      title="裁剪头像"
-      width="500px"
+      title="裁剪海报"
+      width="600px"
       :close-on-click-modal="false"
       @close="resetCropper"
     >
@@ -48,23 +44,22 @@
           :output-type="'webp'"
           :output-size="0.8"
           :auto-crop="true"
-          :auto-crop-width="200"
-          :auto-crop-height="200"
+          :auto-crop-width="640"
+          :auto-crop-height="360"
           :fixed="true"
-          :fixed-number="[1,1]"
+          :fixed-number="[16,9]"
           :center-box="true"
           :info="true"
           :can-move="true"
           :can-scale="true"
         />
       </div>
+      <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
       <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="cropperVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleConfirmCrop" :loading="uploading">
-            确认并上传
-          </el-button>
-        </span>
+        <el-button @click="cropperVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleConfirmCrop" :loading="uploading">
+          确认并上传
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -73,22 +68,18 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { User, Camera, Loading } from '@element-plus/icons-vue'
+import { PictureFilled, Upload } from '@element-plus/icons-vue'
 import { VueCropper } from 'vue-cropper/next'
 import 'vue-cropper/next/dist/index.css'
-import { uploadAvatar } from '@/api/profile'
+import { adminMoviesApi } from '@/api/admin/movies'
 
 const props = defineProps<{
-  /** 当前头像URL */
   modelValue?: string
 }>()
 
 const emit = defineEmits<{
-  /** 上传成功回调 */
   (e: 'update:modelValue', url: string): void
-  /** 上传成功事件 */
   (e: 'success', url: string): void
-  /** 上传失败事件 */
   (e: 'error', err: Error): void
 }>()
 
@@ -97,138 +88,129 @@ const cropperRef = ref<InstanceType<typeof VueCropper> | null>(null)
 const cropperVisible = ref(false)
 const originImageUrl = ref('')
 const previewUrl = computed(() => props.modelValue || '')
-const loading = ref(false)
 const uploading = ref(false)
+const uploadError = ref('')
 
-/** 触发文件选择 */
 const handleSelectFile = () => {
-  if (loading.value || uploading.value) return
+  if (uploading.value) return
   fileInputRef.value?.click()
 }
 
-/** 处理文件选择 */
 const handleFileChange = (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
 
-  // 校验文件大小
-  if (file.size > 2 * 1024 * 1024) {
-    ElMessage.error('头像大小不能超过2MB')
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.error('海报大小不能超过5MB')
     resetFileInput()
     return
   }
 
-  // 校验文件格式
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
     ElMessage.error('仅支持png/jpg/webp格式的图片')
     resetFileInput()
     return
   }
 
-  // 生成预览URL，打开裁剪弹窗
   originImageUrl.value = URL.createObjectURL(file)
+  uploadError.value = ''
   cropperVisible.value = true
   resetFileInput()
 }
 
-/** 确认裁剪并上传 */
 const handleConfirmCrop = async () => {
   if (!cropperRef.value) return
 
   uploading.value = true
-  loading.value = true
+  uploadError.value = ''
 
   try {
-    // 获取裁剪后的Blob
     cropperRef.value.getCropBlob(async (blob: Blob) => {
       try {
-        // 转成File对象
-        const file = new File([blob], 'avatar.webp', { type: 'image/webp' })
-        
-        // 上传到后端
-        const res = await uploadAvatar(file)
-        const avatarUrl = res.data.data.avatar_url
-        
-        // 回调
-        emit('update:modelValue', avatarUrl)
-        emit('success', avatarUrl)
-        ElMessage.success('头像上传成功')
-        
-        // 关闭弹窗
+        const file = new File([blob], 'poster.webp', { type: 'image/webp' })
+        const res = await adminMoviesApi.uploadPoster(file)
+        const posterUrl = res.data.data.poster_url
+
+        emit('update:modelValue', posterUrl)
+        emit('success', posterUrl)
+        ElMessage.success('海报上传成功')
         cropperVisible.value = false
       } catch (err: any) {
-        ElMessage.error(err.response?.data?.message || '头像上传失败')
+        const msg = err.response?.data?.error || '海报上传失败'
+        uploadError.value = msg
+        ElMessage.error(msg)
         emit('error', err)
       } finally {
         uploading.value = false
-        loading.value = false
       }
     })
   } catch (err: any) {
-    ElMessage.error('头像裁剪失败')
+    const msg = '海报裁剪失败'
+    uploadError.value = msg
+    ElMessage.error(msg)
     uploading.value = false
-    loading.value = false
   }
 }
 
-/** 重置文件选择器 */
 const resetFileInput = () => {
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
   }
 }
 
-/** 重置裁剪器 */
 const resetCropper = () => {
   if (originImageUrl.value) {
     URL.revokeObjectURL(originImageUrl.value)
     originImageUrl.value = ''
   }
   cropperRef.value = null
+  uploadError.value = ''
 }
 </script>
 
 <style scoped>
-.avatar-upload {
+.poster-upload {
   display: inline-block;
+  width: 100%;
 }
 
-.avatar-preview {
+.poster-preview {
   position: relative;
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
+  width: 100%;
+  min-height: 160px;
+  border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
-  border: 2px solid #eee;
+  border: 2px dashed #dcdfe6;
   transition: all 0.3s;
+  background: #fafafa;
 }
 
-.avatar-preview:hover {
+.poster-preview:hover {
   border-color: #409eff;
 }
 
-.avatar-preview:hover .avatar-mask {
+.poster-preview:hover .poster-mask {
   opacity: 1;
 }
 
-.avatar-img {
+.poster-img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  min-height: 160px;
+  display: block;
 }
 
-.avatar-placeholder {
+.poster-placeholder {
   width: 100%;
-  height: 100%;
-  background: #f5f7fa;
+  min-height: 160px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #c0c4cc;
+  background: linear-gradient(135deg, #f5f7fa, #e4e7ed);
 }
 
-.avatar-mask {
+.poster-mask {
   position: absolute;
   top: 0;
   left: 0;
@@ -242,25 +224,17 @@ const resetCropper = () => {
   justify-content: center;
   opacity: 0;
   transition: opacity 0.3s;
-  font-size: 12px;
-  gap: 4px;
+  font-size: 13px;
+  gap: 6px;
 }
 
 .cropper-container {
-  height: 400px;
-  padding: 10px;
+  height: 360px;
 }
 
-.is-rotating {
-  animation: rotating 1.5s linear infinite;
-}
-
-@keyframes rotating {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.upload-error {
+  color: #f56c6c;
+  font-size: 13px;
+  padding: 8px 0 0 10px;
 }
 </style>

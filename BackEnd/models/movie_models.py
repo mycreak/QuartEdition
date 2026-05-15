@@ -103,6 +103,11 @@ class RegionRead(BaseModel):
     name: str
 
 
+class RegionCreate(BaseModel):
+    """地区创建入参 — 仅需名称"""
+    name: str = Field(..., min_length=1, max_length=64, description="地区名称")
+
+
 # ═══════════════════════════════════════════
 # movie_ratings 表
 # ═══════════════════════════════════════════

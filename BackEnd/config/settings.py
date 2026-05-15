@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # ── 头像上传限制 ──
     AVATAR_MAX_SIZE_MB: int = 2
     AVATAR_ALLOWED_TYPES: str = "image/png,image/jpeg,image/webp"
+    DEFAULT_AVATAR_URL: str = "https://movie-poster.tos-cn-guangzhou.volces.com/user-avatar/default-avatar.png"
+
+    # ── 付费代理种子注入（启动时写入 proxy_pool，InfraView 管理的数据持久化到 proxies.json） ──
+    # 格式: "host:port:user:pass,host2:port2:user2:pass2"
+    # 示例: "1.2.3.4:8080:user:pass,5.6.7.8:9090:user2:pass2"
+    PAID_PROXIES: str = ""
 
 
 # 全局设置单例（模块导入即创建，自动读 .env）

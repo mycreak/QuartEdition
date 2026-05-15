@@ -277,6 +277,67 @@ async def remove_genre(movie_id: int, type_num: int):
 
 
 # ═══════════════════════════════════════
+# 地区字典管理
+# ═══════════════════════════════════════
+
+@movie_bp.route("/regions", methods=["GET"])
+@require_permission("movie:manage")
+@tag(["电影管理"])
+async def list_regions():
+    """
+    获取全部地区列表（数量少，不分页）。
+
+    返回: [{id: 1, name: "中国大陆"}, ...]
+    """
+    from quart import current_app
+    regions = await current_app.services.movie_service.list_regions()
+    return jsonify([r.model_dump() for r in regions])
+
+
+@movie_bp.route("/regions", methods=["POST"])
+@require_permission("movie:manage")
+@tag(["电影管理"])
+async def create_region():
+    """
+    创建新地区（含唯一性校验）。
+
+    请求体: {name: "日本"}
+    返回:
+        201 — 新创建  {success: true, region: {id, name}, is_new: true}
+        200 — 已存在  {success: true, region: {id, name}, is_new: false, message: "该地区已存在"}
+        400 — 名称无效
+    """
+    from quart import current_app
+    from models.movie_models import RegionCreate
+
+    try:
+        body = await request.get_json()
+        data = RegionCreate(**body)
+    except Exception as e:
+        return jsonify({"error": f"参数校验失败: {str(e)}"}), 400
+
+    try:
+        region, is_new = await current_app.services.movie_service.create_region(data.name)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if is_new:
+        logger.info("新地区已创建: id=%s name=%s", region.id, region.name)
+        return jsonify({
+            "success": True,
+            "region": region.model_dump(),
+            "is_new": True,
+        }), 201
+    else:
+        return jsonify({
+            "success": True,
+            "region": region.model_dump(),
+            "is_new": False,
+            "message": "该地区已存在",
+        }), 200
+
+
+# ═══════════════════════════════════════
 # 地区
 # ═══════════════════════════════════════
 
@@ -378,17 +439,22 @@ async def list_movies_with_pending_reviews():
 
     raw = current_app.services.movie_service.db.raw_mysql()
     rows = await raw.execute_query(
-        """SELECT m.id AS movie_id, m.title,
+        """SELECT m.id AS movie_id, m.douban_id, m.title,
                   COUNT(mr.review_id) AS pending_count
            FROM movies m
            JOIN movie_review mr ON m.id = mr.movie_id
            WHERE mr.status = 'pending'
-           GROUP BY m.id, m.title
+           GROUP BY m.id, m.douban_id, m.title
            ORDER BY pending_count DESC"""
     )
 
     items = [
-        {"movie_id": r["movie_id"], "title": r["title"], "pending_count": r["pending_count"]}
+        {
+            "movie_id": r["movie_id"],
+            "douban_id": r.get("douban_id") or "",
+            "title": r["title"],
+            "pending_count": r["pending_count"],
+        }
         for r in rows
     ]
     return jsonify({"items": items})

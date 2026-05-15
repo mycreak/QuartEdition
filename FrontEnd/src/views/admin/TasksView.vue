@@ -37,56 +37,11 @@
         <el-input-number v-model="taskForm.pages" :min="1" :max="10" style="width: 100%" />
       </el-form-item>
       <el-form-item label="Cookie 身份">
-        <el-select
-          v-model="taskForm.review_cookie_id"
-          placeholder="选择 Cookie 账号"
-          clearable filterable
-          style="width: 100%"
-          :loading="cookieLoadingOptions"
-          @visible-change="onCookieDropdownOpen"
-        >
-          <el-option
-            v-for="acc in cookieAccounts"
-            :key="acc.id"
-            :label="acc.id"
-            :value="acc.id"
-          >
-            <span>{{ acc.label || acc.id }}</span>
-            <span class="c-gray" v-if="acc.label"> ({{ acc.id }})</span>
-            <el-tag v-if="acc.allowed_regions?.length" size="small" class="region-tag">{{ acc.allowed_regions.join(',') }}</el-tag>
-            <el-tag size="small" :type="stateType(acc.state)" class="state-tag">{{ stateLabel(acc.state) }}</el-tag>
-          </el-option>
-          <el-option
-            v-if="cookieAccounts.length === 0 && !cookieLoadingOptions"
-            disabled
-            label="暂无可用 Cookie 账号，请先在基础设施中添加"
-            value=""
-          />
-        </el-select>
+        <CookieSelector v-model="taskForm.review_cookie_id" />
         <div class="form-hint">选填，不选则使用游客模式</div>
       </el-form-item>
       <el-form-item label="代理">
-        <el-select
-          v-model="taskForm.review_proxy_key"
-          placeholder="选择代理"
-          clearable filterable
-          style="width: 100%"
-          :loading="proxyLoadingOptions"
-          @visible-change="onProxyDropdownOpen"
-        >
-          <el-option
-            v-for="p in proxyOptions"
-            :key="p.key"
-            :label="p.label"
-            :value="p.key"
-          />
-          <el-option
-            v-if="proxyOptions.length === 0 && !proxyLoadingOptions"
-            disabled
-            label="暂无可用代理，请先在基础设施中添加"
-            value=""
-          />
-        </el-select>
+        <ProxySelector v-model="taskForm.review_proxy_key" />
         <div class="form-hint">选填，不选则使用直连</div>
       </el-form-item>
     </template>
@@ -150,58 +105,13 @@
               </template>
 
               <el-form-item label="Cookie 身份">
-                <el-select
-                  v-model="taskForm.review_cookie_id"
-                  placeholder="选择 Cookie 账号"
-                  clearable filterable
-                  style="width: 100%"
-                  :loading="cookieLoadingOptions"
-                  @visible-change="onCookieDropdownOpen"
-                >
-                  <el-option
-                    v-for="acc in cookieAccounts"
-                    :key="acc.id"
-                    :label="acc.id"
-                    :value="acc.id"
-                  >
-                    <span>{{ acc.label || acc.id }}</span>
-                    <span class="c-gray" v-if="acc.label"> ({{ acc.id }})</span>
-                    <el-tag v-if="acc.allowed_regions?.length" size="small" class="region-tag">{{ acc.allowed_regions.join(',') }}</el-tag>
-                    <el-tag size="small" :type="stateType(acc.state)" class="state-tag">{{ stateLabel(acc.state) }}</el-tag>
-                  </el-option>
-                  <el-option
-                    v-if="cookieAccounts.length === 0 && !cookieLoadingOptions"
-                    disabled
-                    label="暂无可用 Cookie 账号，请先在基础设施中添加"
-                    value=""
-                  />
-                </el-select>
+                <CookieSelector v-model="taskForm.review_cookie_id" />
                 <div class="form-hint">选填，不选则使用游客模式</div>
               </el-form-item>
               <el-form-item label="代理">
-                <el-select
-                  v-model="taskForm.review_proxy_key"
-                  placeholder="选择代理"
-                  clearable filterable
-                  style="width: 100%"
-                  :loading="proxyLoadingOptions"
-                  @visible-change="onProxyDropdownOpen"
-                >
-                  <el-option
-                    v-for="p in proxyOptions"
-                    :key="p.key"
-                    :label="p.label"
-                    :value="p.key"
-                  />
-                  <el-option
-                    v-if="proxyOptions.length === 0 && !proxyLoadingOptions"
-                    disabled
-                    label="暂无可用代理，请先在基础设施中添加"
-                    value=""
-                  />
-                </el-select>
-                <div class="form-hint">选填，不选则使用直连</div>
-              </el-form-item>
+        <ProxySelector v-model="taskForm.review_proxy_key" />
+        <div class="form-hint">选填，不选则使用直连</div>
+      </el-form-item>
             </template>
 
             <template v-if="taskForm.type === 'movie_scrape_task'">
@@ -223,56 +133,11 @@
                 </div>
               </el-form-item>
               <el-form-item label="Cookie 身份">
-                <el-select
-                  v-model="taskForm.scrape_cookie_id"
-                  placeholder="选择 Cookie 账号"
-                  clearable filterable
-                  style="width: 100%"
-                  :loading="cookieLoadingOptions"
-                  @visible-change="onCookieDropdownOpen"
-                >
-                  <el-option
-                    v-for="acc in cookieAccounts"
-                    :key="acc.id"
-                    :label="acc.id"
-                    :value="acc.id"
-                  >
-                    <span>{{ acc.label || acc.id }}</span>
-                    <span class="c-gray" v-if="acc.label"> ({{ acc.id }})</span>
-                    <el-tag v-if="acc.allowed_regions?.length" size="small" class="region-tag">{{ acc.allowed_regions.join(',') }}</el-tag>
-                    <el-tag size="small" :type="stateType(acc.state)" class="state-tag">{{ stateLabel(acc.state) }}</el-tag>
-                  </el-option>
-                  <el-option
-                    v-if="cookieAccounts.length === 0 && !cookieLoadingOptions"
-                    disabled
-                    label="暂无可用 Cookie 账号，请先在基础设施中添加"
-                    value=""
-                  />
-                </el-select>
+                <CookieSelector v-model="taskForm.scrape_cookie_id" />
                 <div class="form-hint">选填，不选则使用游客模式</div>
               </el-form-item>
               <el-form-item label="代理">
-                <el-select
-                  v-model="taskForm.scrape_proxy_key"
-                  placeholder="选择代理"
-                  clearable filterable
-                  style="width: 100%"
-                  :loading="proxyLoadingOptions"
-                  @visible-change="onProxyDropdownOpen"
-                >
-                  <el-option
-                    v-for="p in proxyOptions"
-                    :key="p.key"
-                    :label="p.label"
-                    :value="p.key"
-                  />
-                  <el-option
-                    v-if="proxyOptions.length === 0 && !proxyLoadingOptions"
-                    disabled
-                    label="暂无可用代理，请先在基础设施中添加"
-                    value=""
-                  />
-                </el-select>
+                <ProxySelector v-model="taskForm.scrape_proxy_key" />
                 <div class="form-hint">选填，不选则使用直连</div>
               </el-form-item>
             </template>
@@ -283,6 +148,14 @@
               </el-form-item>
               <el-form-item label="翻页数">
                 <el-input-number v-model="taskForm.pages" :min="1" :max="10" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="Cookie 身份">
+                <CookieSelector v-model="taskForm.comment_cookie_id" />
+                <div class="form-hint">选填，不选则使用游客模式</div>
+              </el-form-item>
+              <el-form-item label="代理">
+                <ProxySelector v-model="taskForm.comment_proxy_key" />
+                <div class="form-hint">选填，不选则使用直连</div>
               </el-form-item>
             </template>
 
@@ -295,7 +168,7 @@
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="任务进度" name="progress">
+      <el-tab-pane label="实时队列" name="queue">
         <div class="queue-cards">
           <el-card class="q-card"><div class="q-num info">{{ queue.redis_size }}</div><div class="q-label">等待调度</div></el-card>
           <el-card class="q-card"><div class="q-num warning">{{ queue.queue_size }}</div><div class="q-label">队列待消费</div></el-card>
@@ -345,15 +218,29 @@
           </el-table>
         </div>
 
-        <div v-if="!queue.in_flight?.length && !queue.queue_tasks?.length && !queue.redis_tasks?.length && !detailLoading && !progressLoading" class="empty-hint">
-          ✅ 当前无任务，队列空闲
+        <div v-if="!queue.in_flight?.length && !queue.queue_tasks?.length && !queue.redis_tasks?.length && !detailLoading" class="empty-hint">
+          ✅ 当前无您的任务，队列空闲
         </div>
+      </el-tab-pane>
 
-        <el-divider v-if="progressList.length > 0" />
+      <el-tab-pane label="抓取进度" name="crawl-progress">
+        <div class="toolbar">
+          <el-select v-model="crawlProgressType" placeholder="全部类型" clearable style="width: 160px" @change="onCrawlProgressFilter">
+            <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
+          </el-select>
+          <el-select v-model="crawlProgressInterval" placeholder="全部评分区间" clearable style="width: 160px; margin-left: 12px" @change="onCrawlProgressFilter">
+            <el-option v-for="iv in intervalOptions" :key="iv.interval_id" :label="iv.label" :value="iv.interval_id" />
+          </el-select>
+        </div>
 
         <el-table v-if="progressList.length > 0" :data="progressList" stripe v-loading="progressLoading">
           <el-table-column prop="type_num" label="类型号" width="80" />
           <el-table-column prop="type_name" label="类型名" width="120" />
+          <el-table-column label="评分阶级" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" type="warning">{{ intervalLabel(row.interval_id) }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="进度" min-width="220">
             <template #default="{ row }">
               <div class="progress-cell">
@@ -374,6 +261,7 @@
             </template>
           </el-table-column>
         </el-table>
+        <div v-else class="empty-hint">✅ 暂无抓取进度数据</div>
       </el-tab-pane>
 
       <el-tab-pane label="历史" name="history">
@@ -444,13 +332,18 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
 import { adminTasksApi, adminTaskHistoryApi, type TaskHistory, type TaskHistoryDetail } from '@/api/admin/tasks'
 import { adminQueueApi } from '@/api/admin/monitor'
 import { adminDoubanIdsApi } from '@/api/admin/douban_ids'
-import { adminCookieApi, adminProxyApi, type CookieAccount } from '@/api/admin/infra'
+import { adminCookieApi, type CookieAccount } from '@/api/admin/infra'
 import { adminMoviesApi } from '@/api/admin/movies'
+import ProxySelector from '@/components/common/ProxySelector.vue'
+import CookieSelector from '@/components/common/CookieSelector.vue'
 import type { QueueStatus } from '@/types/status'
 import type { MovieWithPendingReviews, PendingReview, TaskSubmitResponse } from '@/types/task'
+
+const authStore = useAuthStore()
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作',
@@ -480,6 +373,8 @@ const intervalOptions = [
 
 const activeTab = ref('submit')
 const submitting = ref(false)
+const crawlProgressType = ref<number | undefined>(undefined)
+const crawlProgressInterval = ref('')
 const histStatus = ref('')
 
 const taskForm = reactive({ 
@@ -583,13 +478,7 @@ function stopSecondsTimer(): void {
 const cookieAccounts = ref<CookieAccount[]>([])
 const cookieLoadingOptions = ref(false)
 
-interface ProxyOption {
-  key: string
-  label: string
-}
 
-const proxyOptions = ref<ProxyOption[]>([])
-const proxyLoadingOptions = ref(false)
 
 async function fetchCookieOptions() {
   cookieLoadingOptions.value = true
@@ -603,33 +492,9 @@ async function fetchCookieOptions() {
   }
 }
 
-async function fetchProxyOptions() {
-  proxyLoadingOptions.value = true
-  try {
-    const res = await adminProxyApi.list()
-    const items = res.data.proxies || []
-    proxyOptions.value = items
-      .filter(p => p.is_alive)
-      .map(p => ({
-        key: `${p.host}:${p.port}`,
-        label: `${p.host}:${p.port}${p.region ? ' (' + p.region + ')' : ''}`,
-      }))
-  } catch {
-    proxyOptions.value = []
-  } finally {
-    proxyLoadingOptions.value = false
-  }
-}
-
 function onCookieDropdownOpen(visible: boolean) {
   if (visible && cookieAccounts.value.length === 0) {
     fetchCookieOptions()
-  }
-}
-
-function onProxyDropdownOpen(visible: boolean) {
-  if (visible && proxyOptions.value.length === 0) {
-    fetchProxyOptions()
   }
 }
 
@@ -643,9 +508,19 @@ function stateLabel(state: string): string {
   return m[state] || state
 }
 
+function intervalLabel(intervalId: string): string {
+  const found = intervalOptions.find(iv => iv.interval_id === intervalId)
+  return found?.label || intervalId || '—'
+}
+
+function onCrawlProgressFilter() {
+  fetchProgress()
+}
+
 async function fetchQueue() {
   try {
-    const res = await adminQueueApi.get()
+    const adminId = authStore.user?.id
+    const res = await adminQueueApi.get(adminId ? { admin_id: adminId } : {})
     Object.assign(queue, res.data)
   } catch { /* ignore */ }
 }
@@ -653,17 +528,26 @@ async function fetchQueue() {
 async function fetchProgress() {
   progressLoading.value = true
   try {
-    const res = await adminTasksApi.list({ page_size: 100 })
+    const params: { type_num?: number; interval_id?: string; page_size: number } = { page_size: 100 }
+    if (crawlProgressType.value) params.type_num = crawlProgressType.value
+    if (crawlProgressInterval.value) params.interval_id = crawlProgressInterval.value
+    const res = await adminTasksApi.list(params)
     progressList.value = (res.data.items || [])
-      .filter((r: any) => r.total > 0 || r.type_name)
-      .map((r: any) => ({ ...r, done: r.total > 0 && r.crawled >= r.total }))
+      .filter((r: any) => r.douban_total > 0)
+      .map((r: any) => ({
+        ...r,
+        total: r.douban_total,
+        crawled: r.crawled_count,
+        done: r.crawled_count >= r.douban_total,
+      }))
   } catch { /* ignore */ } finally { progressLoading.value = false }
 }
 
 async function fetchProgressDetail() {
   detailLoading.value = true
   try {
-    const res = await adminQueueApi.fetchDetails()
+    const adminId = authStore.user?.id
+    const res = await adminQueueApi.fetchDetails(adminId)
     Object.assign(queue, res.data)
     syncLiveSeconds()
     if (queue.in_flight?.length) {
@@ -687,8 +571,11 @@ async function fetchHistory(p = 1) {
 }
 
 function onTabChange(tab: string) {
-  if (tab === 'progress') {
+  if (tab === 'queue') {
     fetchProgressDetail()
+  } else if (tab === 'crawl-progress') {
+    fetchProgress()
+    stopSecondsTimer()
   } else {
     stopSecondsTimer()
   }
@@ -713,10 +600,9 @@ function onTypeChange() {
   selectedReviewIds.value = []
   pendingReviews.value = []
   
-  // 加载Cookie和代理选项
+  // 加载Cookie选项
   if (['movie_scrape_task', 'review_crawl', 'comment_crawl', 'review_body_crawl'].includes(taskForm.type)) {
     fetchCookieOptions()
-    fetchProxyOptions()
   }
   
   // 如果是review_body_crawl，加载待爬电影列表
@@ -839,6 +725,8 @@ async function submitTask() {
       case 'comment_crawl':
         payload.douban_id = taskForm.douban_id
         payload.pages = taskForm.pages
+        if (taskForm.comment_cookie_id) payload.cookie_id = taskForm.comment_cookie_id
+        if (taskForm.comment_proxy_key) payload.proxy_key = taskForm.comment_proxy_key
         break
       case 'review_body_crawl':
         payload.douban_id = taskForm.douban_id

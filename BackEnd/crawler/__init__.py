@@ -31,7 +31,6 @@ crawler/__init__.py
 import asyncio
 import json
 import logging
-import os
 import time
 from typing import Optional
 
@@ -57,57 +56,10 @@ REVIEW_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/reviews"
 COMMENT_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/comments"
 SUBJECT_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/"
 
-DOUBAN_STORAGE_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "data",
-    "douban_storage.json",
-)
-
 
 # ═══════════════════════════════════════════════════════════════
 # 辅助函数（无状态，纯逻辑）
 # ═══════════════════════════════════════════════════════════════
-
-def _load_douban_storage():
-    """
-    加载豆瓣登录 storage state 文件（启动时同步调用）。
-
-    输出：(cookies_dict, playwright_state)
-    副作用：只读文件
-    """
-    if not os.path.exists(DOUBAN_STORAGE_FILE):
-        logger.info("豆瓣登录态文件不存在，将以游客模式运行")
-        return {}, None
-
-    try:
-        with open(DOUBAN_STORAGE_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        logger.warning(f"豆瓣登录态文件解析失败: {e}")
-        return {}, None
-
-    if "playwright_state" in raw:
-        saved_at = raw.get("saved_at", "未知")
-        playwright_state = raw["playwright_state"]
-        logger.info(f"已加载豆瓣登录态（保存于 {saved_at}）")
-    else:
-        playwright_state = raw
-        logger.info("已加载豆瓣登录态（旧格式，无保存时间）")
-
-    cookies = {}
-    for c in playwright_state.get("cookies", []):
-        name = c.get("name")
-        value = c.get("value")
-        if name and value:
-            cookies[name] = value
-
-    dbcl2 = cookies.get("dbcl2", "")
-    if dbcl2:
-        logger.info(f"  dbcl2: {dbcl2[:8]}...（共 {len(cookies)} 条 cookie）")
-    else:
-        logger.warning("  未找到 dbcl2 cookie，登录态可能无效")
-
-    return cookies, playwright_state
 
 
 def classify_item_error(exc: Exception) -> str:
@@ -225,7 +177,7 @@ class CrawlerEngine:
         await self._event_queue.put(event.model_dump())
 
     async def verify_douban_storage(self) -> bool:
-        """启动后异步验证登录态是否有效。输出 True/False。"""
+        """启动后异步验证登录态是否有效（使用 CookieManager 中 active 账号的 Cookie）。输出 True/False。"""
         try:
             result = await self._api.fetch("https://www.douban.com/mine")
         except Exception:
@@ -235,8 +187,7 @@ class CrawlerEngine:
         if isinstance(result, str) and "login" in result[:200]:
             logger.warning(
                 "豆瓣登录态已过期！爬虫将以游客模式运行。\n"
-                "  请在本机重新运行: python scripts/douban_login.py\n"
-                "  然后更新服务器上的 data/douban_storage.json"
+                "  请通过管理面板「基础设施→Cookie管理」添加新的有效 Cookie"
             )
             return False
 

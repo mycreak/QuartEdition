@@ -3,7 +3,7 @@
     <div class="card-poster">
       <el-image
         v-if="movie.poster_url"
-        :src="movie.poster_url"
+        :src="cleanUrl(movie.poster_url)"
         fit="cover"
         referrerpolicy="no-referrer"
         class="poster-img"
@@ -47,6 +47,14 @@ import { formatRating } from '@/utils/format'
 import { VideoCamera, StarFilled } from '@element-plus/icons-vue'
 
 defineProps<{ movie: Movie }>()
+
+/**
+ * 清理URL中的多余字符（反引号、空格等）
+ */
+function cleanUrl(url: string): string {
+  // 去掉前后的空格和反引号
+  return url.replace(/^[\s`]+|[\s`]+$/g, '')
+}
 </script>
 
 <style scoped>

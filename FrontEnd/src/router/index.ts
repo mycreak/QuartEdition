@@ -88,7 +88,7 @@ const routes: RouteRecordRaw[] = [
         path: 'infra',
         name: 'AdminInfra',
         component: () => import('@/views/admin/InfraView.vue'),
-        meta: { requiresAuth: true, permission: 'system:monitor' },
+        meta: { requiresAuth: true, permission: ['infra:proxy:read', 'infra:cookie:read', 'system:monitor'] },
       },
       {
           path: 'douban-ids',

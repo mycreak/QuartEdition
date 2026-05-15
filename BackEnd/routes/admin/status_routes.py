@@ -101,27 +101,19 @@ async def system_status():
     except Exception:
         pass
 
-    # ── Cookie 健康 ──
+    # ── Cookie 健康（新版 CookieManager，不再读取旧版 douban_storage.json） ──
     try:
-        import os, json
-        storage_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "data", "douban_storage.json",
-        )
-        if os.path.exists(storage_file):
-            with open(storage_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            status["cookie_saved_at"] = raw.get("saved_at", None)
-            playwright_state = raw.get("playwright_state", raw)
-            cookies = {c.get("name"): c.get("value", "") for c in playwright_state.get("cookies", [])}
-            status["cookie_has_dbcl2"] = bool(cookies.get("dbcl2"))
-            status["cookie_valid"] = bool(cookies.get("dbcl2"))
-        else:
-            status["cookie_saved_at"] = None
-            status["cookie_has_dbcl2"] = False
-            status["cookie_valid"] = False
+        from crawler.cookie_manager import get_cookie_manager
+        mgr = get_cookie_manager()
+        accounts = mgr.list_all()
+        active = [a for a in accounts if a["state"] == "active"]
+        status["cookie_saved_at"] = active[0].get("saved_at") if active else None
+        status["cookie_has_dbcl2"] = any(a.get("dbcl2_preview") for a in accounts)
+        status["cookie_valid"] = len(active) > 0
     except Exception:
-        pass
+        status["cookie_saved_at"] = None
+        status["cookie_has_dbcl2"] = False
+        status["cookie_valid"] = False
 
     # ── 代理池健康 ──
     try:
@@ -141,7 +133,8 @@ async def task_queue_status():
     """
     实时任务队列快照 — Redis ZSET 待拉取 + asyncio.Queue + Worker 状态。
 
-    ?details=1 → 同时返回 redis_tasks / queue_tasks / in_flight 详情
+    ?details=1  → 同时返回 redis_tasks / queue_tasks / in_flight 详情
+    ?admin_id=N → 只返回该管理员的排队+执行中任务（不传则返回全部）
     """
     from quart import current_app
     from background.worker import get_browser_pool
@@ -151,6 +144,7 @@ async def task_queue_status():
     app = current_app
     result = {}
     include_details = request.args.get("details") == "1"
+    admin_id = request.args.get("admin_id", type=int)
 
     try:
         redis_client = _get_redis()
@@ -202,6 +196,11 @@ async def task_queue_status():
             result["in_flight"] = in_flight
     except Exception:
         pass
+
+    if admin_id:
+        for key in ("redis_tasks", "queue_tasks", "in_flight"):
+            if key in result:
+                result[key] = [t for t in result[key] if t.get("admin_id") == admin_id]
 
     return jsonify(result)
 

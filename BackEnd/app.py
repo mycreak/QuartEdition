@@ -37,7 +37,6 @@ from background.monitor import init_monitor, start_monitor, stop_monitor
 # 导入爬虫入口模块：接收任务，编排 fetch → parse → store
 from crawler import init_crawler
 from crawler import execute as crawler_execute
-from crawler import _verify_douban_storage
 from services.movie_service import MovieService
 from services.app_services import AppServices
 # 导入 Playwright：管理 Chromium 浏览器生命周期
@@ -48,6 +47,7 @@ from utils.snowflake import init_snowflake
 from utils.websocket import init_ws_manager
 from routes.websocket import register_websocket_routes
 from routes.admin import admin_bp, init_task_failure_service
+from routes.admin.poster_routes import poster_bp
 from routes.public import auth_bp
 from routes.user import user_bp
 from services.auth_service import init_auth_service
@@ -152,6 +152,7 @@ def create_app():
     # 在 QuartSchema() 之前注册，确保 OpenAPI 文档能捕获所有端点
     # 蓝图注册不需要数据库就绪，纯 URL 映射
     app.register_blueprint(admin_bp, url_prefix="/admin")
+    app.register_blueprint(poster_bp)
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(user_bp, url_prefix="/user")
 
@@ -173,6 +174,7 @@ def create_app():
         执行时机：Web服务接收请求前，一次性初始化所有核心资源
         作用：避免运行中重复创建连接/实例，保证服务启动即就绪
         """
+        logger = logging.getLogger(__name__)
         # ==================== 1. 初始化数据库连接池 ====================
         await init_mysql()
         await init_redis()
@@ -206,6 +208,44 @@ def create_app():
         from utils.tos_client import init_tos_client
         init_tos_client()
 
+        # ==================== 5a2. 注入付费代理种子（从 .env PAID_PROXIES 加载） ====================
+        from config.settings import settings
+        from crawler.proxy import init_proxy_pool, SourceType
+        proxy_pool = init_proxy_pool()
+        await proxy_pool.load_persisted()
+
+        paid_proxies = settings.PAID_PROXIES
+        if not paid_proxies:
+            # 兼容旧格式: PAID_PROXY_HOST=ip PAID_PROXY_PORT=port ...
+            old_host = getattr(settings, 'PAID_PROXY_HOST', '')
+            if old_host:
+                old_port = getattr(settings, 'PAID_PROXY_PORT', 0)
+                old_user = getattr(settings, 'PAID_PROXY_USER', '')
+                old_pass = getattr(settings, 'PAID_PROXY_PASS', '')
+                paid_proxies = f"{old_host}:{old_port}:{old_user}:{old_pass}"
+
+        for entry in paid_proxies.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split(":")
+            host = parts[0].strip()
+            port = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip().isdigit() else 0
+            user = parts[2].strip() if len(parts) > 2 else ""
+            passwd = parts[3].strip() if len(parts) > 3 else ""
+            if host and port:
+                ok = await proxy_pool.add_proxy(
+                    host=host, port=port,
+                    username=user, password=passwd,
+                    source=SourceType.ADMIN,
+                    remark=host,
+                    prefer=True,
+                )
+                if ok:
+                    logger.info(f"付费代理已注入: {host}:{port}")
+                else:
+                    logger.warning(f"付费代理注入失败（可能已在池中）: {host}:{port}")
+
         # ==================== 5b. 初始化 CookieManager（多账号管理） ====================
         from crawler.cookie_manager import init_cookie_manager as _init_cm
         await _init_cm()
@@ -226,12 +266,6 @@ def create_app():
             playwright=app.playwright,
             event_queue=app.worker_event_queue,
         )
-
-        # ==================== 6b. 异步验证豆瓣登录态有效性 ====================
-        # 不阻塞启动，后台悄悄验证，结果仅影响日志
-        # 使用 add_background_task 而非 ensure_future：
-        #   shutdown 时 Quart 自动 cancel，不会导致关闭延迟或异常静默丢失
-        app.add_background_task(_verify_douban_storage)
 
         # ==================== 7. 初始化并启动 BrowserPool ====================
         # 固定 5 个 Worker 协程（默认值），共享 1 个浏览器实例

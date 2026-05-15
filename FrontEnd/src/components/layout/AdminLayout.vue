@@ -62,14 +62,7 @@
           <el-icon><Tools /></el-icon>
           <template #title>基础设施</template>
         </el-menu-item>
-
-        <el-divider class="menu-divider" />
-
-        <el-menu-item index="/admin/profile">
-          <el-icon><User /></el-icon>
-          <template #title>个人中心</template>
-        </el-menu-item>
-      </el-menu>
+    </el-menu>
     </el-aside>
 
     <el-container>

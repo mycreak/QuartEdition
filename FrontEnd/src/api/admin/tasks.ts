@@ -4,7 +4,7 @@ import type { TaskSubmit, TaskSubmitResponse } from '@/types/task'
 export const adminTasksApi = {
   submit: (data: TaskSubmit) => client.post<TaskSubmitResponse>('/admin/tasks', data),
 
-  list: (params: { type_num?: number; page?: number; page_size?: number }) =>
+  list: (params: { type_num?: number; interval_id?: string; page?: number; page_size?: number }) =>
     client.get<{ items: Array<Record<string, unknown>>; page: number; page_size: number; total: number }>('/admin/tasks', { params }),
 }
 

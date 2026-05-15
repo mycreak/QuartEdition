@@ -77,6 +77,9 @@ async def get_movie(movie_id: int):
         "crew": detail.crew,
         "genres": [g.model_dump() for g in detail.genres],
         "regions": [r.model_dump() for r in detail.regions],
+        # AI 聚合字段 — 与管理员接口一致
+        "ai_summary": detail.ai_summary,
+        "ai_tags": detail.ai_tags,
     }
     return jsonify(data)
 
@@ -102,33 +105,52 @@ async def get_comment_wordcloud(movie_id: int):
 
     cache_key = f"wordcloud:movie:{movie_id}"
 
-    # 1. 查缓存
-    cached = await redis_get(cache_key)
-    if cached:
-        data = json.loads(cached)
-        return jsonify({"success": True, "data": data})
+    # 1. 查缓存（Redis 不可用时降级为实时生成，不报 500）
+    try:
+        cached = await redis_get(cache_key)
+        if cached:
+            try:
+                data = json.loads(cached)
+            except json.JSONDecodeError:
+                logger.warning("词云缓存 JSON 解析失败 movie_id=%s，将删除损坏缓存", movie_id)
+                try:
+                    from db.redis import redis_delete
+                    await redis_delete(cache_key)
+                except Exception:
+                    pass
+            else:
+                return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.warning("Redis 读取缓存失败 movie_id=%s: %s，降级为实时生成", movie_id, e)
 
     # 2. 取短评文本
-    review_svc = _get_review_service()
-    comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=200)
+    try:
+        review_svc = _get_review_service()
+        comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=200)
+    except Exception as e:
+        logger.error("获取短评文本失败 movie_id=%s: %s", movie_id, e)
+        return jsonify({"success": False, "error": "获取短评数据失败，请稍后重试"}), 500
 
     if len(comments) < 10:
         empty_data = {"words": [], "total_words": 0, "updated_at": None}
         return jsonify({"success": True, "data": empty_data})
 
-    # 3. 调用 AI 生成词云
+    # 3. 调用 AI 生成词云（内部已做重试+异常捕获，失败返回 None）
     ai_client = get_ai_client()
     words = await ai_client.generate_comment_wordcloud(comments)
 
     if not words:
         return jsonify({"success": False, "error": "词云生成失败，请稍后重试"}), 500
 
-    # 4. 写缓存 + 返回
+    # 4. 写缓存 + 返回（缓存写入失败不影响主流程）
     data = {
         "words": words,
         "total_words": len(words),
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    await redis_set(cache_key, json.dumps(data, ensure_ascii=False))
+    try:
+        await redis_set(cache_key, json.dumps(data, ensure_ascii=False))
+    except Exception as e:
+        logger.warning("Redis 写入词云缓存失败 movie_id=%s: %s", movie_id, e)
 
     return jsonify({"success": True, "data": data})

@@ -8,6 +8,11 @@ const PERMISSION_CODES = [
   'comment:read',
   'comment:manage',
   'system:monitor',
+  'infra:proxy:read',
+  'infra:proxy:manage',
+  'infra:cookie:read',
+  'infra:cookie:manage',
+  'infra:sensitive:read',
 ] as const
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number]
@@ -22,6 +27,11 @@ const PERMISSION_DESCRIPTIONS: Record<PermissionCode, string> = {
   'comment:read': '评论查看 — 浏览评论和短评',
   'comment:manage': '评论管理 — 审核上架/下架评论',
   'system:monitor': '系统监控 — 查看实时状态、队列、日志、限流事件',
+  'infra:proxy:read': '代理查看 — 查看代理池列表、状态',
+  'infra:proxy:manage': '代理管理 — 添加、删除、验证代理',
+  'infra:cookie:read': 'Cookie查看 — 查看Cookie账号列表、状态',
+  'infra:cookie:manage': 'Cookie管理 — 添加、删除、验证Cookie账号',
+  'infra:sensitive:read': '敏感信息查看 — 查看代理密码、完整Cookie值等敏感信息',
 }
 
 export function hasPermission(
@@ -32,7 +42,17 @@ export function hasPermission(
     return false
   }
   const requiredList = Array.isArray(required) ? required : [required]
-  return requiredList.every((code) => userPermissions.includes(code))
+  return requiredList.every((code) =>
+    userPermissions.includes(code) ||
+    (code.startsWith('infra:') && userPermissions.includes('system:monitor'))
+  )
+}
+
+export function getPermissionShortName(code: string): string {
+  const desc = PERMISSION_DESCRIPTIONS[code as PermissionCode]
+  if (!desc) return code
+  const dashIndex = desc.indexOf(' — ')
+  return dashIndex === -1 ? desc : desc.slice(0, dashIndex)
 }
 
 export { PERMISSION_CODES, PERMISSION_DESCRIPTIONS }

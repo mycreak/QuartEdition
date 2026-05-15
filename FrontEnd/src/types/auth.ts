@@ -23,8 +23,11 @@ export interface RegisterRequest {
 export interface LoginResponse {
   token: string
   user: {
+    id: number
     uuid: number
     username: string
     display_name: string
+    avatar_url?: string
+    permissions?: string[]
   }
 }

@@ -4,7 +4,7 @@
 
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索电影..." clearable class="search-input" />
-      <el-select v-model="publishedFilter" placeholder="上下架" clearable>
+      <el-select v-model="publishedFilter" placeholder="上下架" clearable class="filter-select">
         <el-option label="已上架" value="published" />
         <el-option label="已下架" value="unpublished" />
       </el-select>
@@ -106,7 +106,8 @@ onMounted(() => fetchList())
 .admin-movies { max-width: 1280px; }
 .page-title { font-size: 22px; color: #1a1a2e; margin: 0 0 20px; }
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
-.search-input { width: 240px; }
+.search-input { width: 400px; }
+.filter-select { width: 120px; }
 .rating-cell { color: #e8a838; font-weight: 600; }
 .rating-count { font-size: 11px; color: #aaa; }
 .genre-tag { margin-right: 4px; margin-bottom: 2px; }

@@ -9,14 +9,52 @@ import aiohttp
 import logging
 from typing import List, Dict, Optional
 from config.settings import settings
-from scripts.ai_prompts import (
-    REVIEW_SUMMARY_SYSTEM_PROMPT,
-    REVIEW_SUMMARY_USER_PROMPT_TPL,
-    COMMENT_WORDCLOUD_SYSTEM_PROMPT,
-    COMMENT_WORDCLOUD_USER_PROMPT_TPL,
-)
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════
+# DeepSeek Prompt 模板（内联，不依赖 scripts/）
+# ═══════════════════════════════════════
+
+REVIEW_SUMMARY_SYSTEM_PROMPT = """你是一个专业的电影评论分析助手。用户会提供一部电影的若干条观众长评，请你：
+1. 综合所有长评的核心观点，生成一段 300 字以内的整体总结。
+2. 提取 5-10 个关键词标签，概括观众的主要评价维度（如"剧情紧凑""演技在线""画面精美""节奏拖沓"等）。
+
+你必须以严格的 JSON 格式返回结果，不要添加任何额外文字：
+{
+  "full_summary": "300字以内的综合总结",
+  "tags": ["标签1", "标签2", "标签3", ...]
+}"""
+
+REVIEW_SUMMARY_USER_PROMPT_TPL = """以下是某部电影的部分观众长评，请综合这些内容生成总结和标签：
+
+{reviews_text}"""
+
+
+COMMENT_WORDCLOUD_SYSTEM_PROMPT = """你是一个专业的电影短评分析助手。用户会提供一部电影的若干条观众短评，请你：
+1. 从这些短评中提取 30-50 个最具代表性的评价关键词/词组。
+2. 每个关键词需要给出权重（0-200），权重越高表示该关键词越能代表观众的整体评价倾向。
+3. 优先提取包含具体情感色彩的评价类词组（如"演技炸裂""剧情拖沓"），而非普通形容词。
+4. 避免提取无意义高频词（如"电影""不错""还行""好看"这类缺乏信息量的词）。
+
+你必须以严格的 JSON 格式返回结果，不要添加任何额外文字：
+{
+  "words": [
+    {"text": "演技炸裂", "weight": 150},
+    {"text": "剧情拖沓", "weight": 120},
+    {"text": "画面精美", "weight": 95}
+  ]
+}"""
+
+COMMENT_WORDCLOUD_USER_PROMPT_TPL = """以下是某部电影的部分观众短评，请从中提取高频关键词和词组用于生成词云：
+
+{comments_text}"""
+
+
+# ═══════════════════════════════════════
+# AI 客户端实现
+# ═══════════════════════════════════════
 
 class AIClientError(Exception):
     """AI调用异常基类"""

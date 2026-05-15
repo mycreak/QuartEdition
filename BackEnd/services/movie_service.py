@@ -125,6 +125,33 @@ class MovieService:
         rows = await self.db.execute_raw("SELECT id, name FROM regions ORDER BY id")
         return [RegionRead(**r) for r in rows]
 
+    async def create_region(self, name: str) -> Tuple[RegionRead, bool]:
+        """
+        创建地区（含唯一性校验）。
+
+        输入：name: 地区名称
+        输出：(RegionRead, is_new)
+            is_new=True  — 新创建
+            is_new=False — 已存在（幂等返回已有记录）
+        副作用：
+            - is_new=True  → INSERT INTO regions
+            - is_new=False → 只读 SELECT（不写入）
+        """
+        name = name.strip()
+        if not name:
+            from utils.errors import ServiceError
+            raise ServiceError("地区名称不能为空", status_code=400, code="INVALID_NAME")
+
+        # 1. 先查是否存在
+        existing = await self.db.find_one("regions", {"name": name})
+        if existing:
+            return RegionRead(id=existing["id"], name=existing["name"]), False
+
+        # 2. 不存在则插入
+        rid = await self.db.insert("regions", {"name": name}, return_id=True)
+        logger.info("新地区已创建: id=%s name=%s", rid, name)
+        return RegionRead(id=rid, name=name), True
+
     # ==================== 电影 CRUD ====================
 
     async def create_movie(self, data: MovieCreate, changed_by: str = "") -> MovieRead:

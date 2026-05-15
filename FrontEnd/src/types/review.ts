@@ -1,8 +1,10 @@
 export interface Review {
-  id: number
+  id: number | string
+  _id?: string
   movie_id: number
   title: string
   content: string
+  text?: string
   author: string
   rating?: number
   is_published?: boolean

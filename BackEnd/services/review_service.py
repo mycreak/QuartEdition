@@ -222,6 +222,7 @@ class ReviewService:
 
         输入：movie_id: 本地电影ID, limit: 最多取多少条
         输出：短评纯文本字符串列表
+        副作用：无异常抛出 — 集合不存在/无数据/连接失败均返回空列表
         """
         if not movie_id:
             return []
@@ -241,6 +242,12 @@ class ReviewService:
                 page_size=limit,
             )
             return [item.get("text", "") for item in items if item.get("text")]
+        except Exception as e:
+            logger.warning(
+                "获取短评文本异常 movie_id=%s: %s，返回空列表降级处理",
+                movie_id, e,
+            )
+            return []
         finally:
             self.db._set_type(original_type)
 

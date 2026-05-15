@@ -36,7 +36,7 @@ async def upload_avatar():
     校验：
         - 文件大小 ≤ 2MB
         - 文件格式仅限 png / jpg / webp
-    存储：TOS Key = avatars/avatar_{user_uuid}.webp（覆盖旧头像）
+    存储：TOS Key = user-avatar/avatar_{user_uuid}.webp（覆盖旧头像）
     返回：{ success, message, data: { avatar_url } }
     """
     from quart import g
@@ -75,7 +75,7 @@ async def upload_avatar():
     if tos is None or not tos.enabled:
         return jsonify({"error": "上传失败，请稍后重试"}), 500
 
-    dest_key = f"avatars/avatar_{user.uuid}.webp"
+    dest_key = f"user-avatar/avatar_{user.uuid}.webp"
     public_url = await tos.upload(dest_key, file_bytes, content_type="image/webp")
     if not public_url:
         return jsonify({"error": "上传失败，请稍后重试"}), 500

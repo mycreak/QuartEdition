@@ -83,6 +83,7 @@ class AuthService:
             "username": data.username,
             "password_hash": password_hash,
             "display_name": display_name,
+            "avatar_url": settings.DEFAULT_AVATAR_URL,
         })
         logger.info(f"用户已创建: id={user_id} uuid={user_uuid} username='{data.username}'")
         return await self.get_user(user_id)
@@ -210,28 +211,50 @@ class AuthService:
     # 权限
     # ═══════════════════════════════════════
 
-    async def check_permission(self, user_id: int, permission_code: str) -> bool:
-        """
-        检查用户是否拥有指定权限。
-
-        输入：user_id, permission_code（如 "crawler:manage"）
-        输出：True=有权限, False=无
-        """
+    async def _has_permission(self, user_id: int, permission_code: str) -> bool:
+        """纯数据库查询：用户是否拥有指定权限码。"""
         row = await self.db.find_one("user_permissions", {
             "user_id": user_id,
             "permission_code": permission_code,
         })
         return row is not None
 
+    async def check_permission(self, user_id: int, permission_code: str) -> bool:
+        """
+        检查用户是否拥有指定权限。
+
+        system:monitor 作为超级监控权限，自动涵盖所有 infra:* 子权限：
+            infra:proxy:read / infra:proxy:manage
+            infra:cookie:read / infra:cookie:manage
+            infra:sensitive:read
+
+        输入：user_id, permission_code（如 "crawler:manage"）
+        输出：True=有权限, False=无
+        """
+        # system:monitor 持有者自动获得所有 infra:* 权限
+        if permission_code.startswith("infra:"):
+            if await self._has_permission(user_id, "system:monitor"):
+                return True
+
+        return await self._has_permission(user_id, permission_code)
+
     async def check_permissions(self, user_id: int, codes: List[str]) -> Dict[str, bool]:
         """
         批量检查多个权限 — 一次 SELECT IN 替代 N 次 check_permission。
+
+        同样遵守 system:monitor → infra:* 的自动涵盖规则。
 
         输入：user_id, [permission_code, ...]
         输出：{code: True/False, ...}
         """
         if not codes:
             return {}
+
+        # system:monitor 持有者对 infra:* 自动通过
+        has_monitor = None
+        infra_codes = [c for c in codes if c.startswith("infra:")]
+        if infra_codes:
+            has_monitor = await self._has_permission(user_id, "system:monitor")
 
         placeholders = ", ".join(["%s"] * len(codes))
         rows = await self.db.execute_raw(
@@ -240,7 +263,13 @@ class AuthService:
             (user_id, *codes),
         )
         existing = {r["permission_code"] for r in rows}
-        return {code: (code in existing) for code in codes}
+
+        return {
+            code: True if (code in existing) else (
+                True if (code.startswith("infra:") and has_monitor) else False
+            )
+            for code in codes
+        }
 
     # ═══════════════════════════════════════
     # 权限管理（需 user:manage）

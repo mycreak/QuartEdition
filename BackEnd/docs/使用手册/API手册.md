@@ -166,6 +166,7 @@ POST /admin/tasks
 
 // director_crawl — 独立补爬演职人员（失败管理"重爬"也使用此类型）
 {"type": "director_crawl", "douban_id": "1292052", "movie_id": 42}
+  可选: "cookie_id": "main", "proxy_key": "1.2.3.4:3128"   ← 显式指定身份
   注意: movie_scrape_task 自动注入此任务，管理员通常无需手动提交
   场景: 从失败管理点"重爬"时自动构造此类型
 

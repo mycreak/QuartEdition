@@ -65,7 +65,12 @@ SQLS = [
       ('movie:read',           '查看电影数据',  '只读访问电影详情'),
       ('comment:read',         '评论查看',      '查看长评/短评列表'),
       ('comment:manage',       '评论管理',      '长评/短评上下架管理'),
-      ('system:monitor',       '系统监控',      '查看实时状态/队列/日志/限流事件')
+      ('system:monitor',       '系统监控',      '查看实时状态/队列/日志/限流事件'),
+      ('infra:proxy:read',     '代理查看',      '查看代理列表和下拉选项'),
+      ('infra:proxy:manage',   '代理管理',      '增删改代理+连通性测试'),
+      ('infra:cookie:read',    'Cookie查看',    '查看Cookie列表和下拉选项'),
+      ('infra:cookie:manage',  'Cookie管理',    '增删改Cookie+有效性测试'),
+      ('infra:sensitive:read', '敏感信息查看',  '查看代理密码、完整Cookie值')
     ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description)""",
 
     # P1 — douban_id 资产表
@@ -284,6 +289,11 @@ PERMISSION_CODES = [
     "comment:read",
     "comment:manage",
     "system:monitor",
+    "infra:proxy:read",
+    "infra:proxy:manage",
+    "infra:cookie:read",
+    "infra:cookie:manage",
+    "infra:sensitive:read",
 ]
 
 DEFAULT_ADMIN = os.environ.get("ADMIN_USERNAME", "admin1")
@@ -325,7 +335,7 @@ async def main():
                     VALUES (%s, %s, 0)
                 """, (admin_id, code))
 
-            print(f"  [OK] 超级管理员已种子: username='{DEFAULT_ADMIN}' id={admin_id} 9 条权限")
+            print(f"  [OK] 超级管理员已种子: username='{DEFAULT_ADMIN}' id={admin_id} 14 条权限")
 
     await close_mysql()
     print(f"\n[OK] 用户认证系统初始化完成")

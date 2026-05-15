@@ -138,6 +138,10 @@ async def submit_task():
             return jsonify({"error": "director_crawl 需要 douban_id 和 movie_id"}), 400
         task_data["douban_id"] = douban_id
         task_data["movie_id"] = movie_id
+        cookie_id = body.get("cookie_id", "").strip()
+        proxy_key = body.get("proxy_key", "").strip()
+        task_data["cookie_id"] = cookie_id
+        task_data["proxy_key"] = proxy_key
 
     task_json = json.dumps(task_data, ensure_ascii=False)
 
@@ -191,7 +195,13 @@ async def submit_task():
 @tag(["爬虫任务"])
 async def list_tasks():
     """
-    爬取进度列表 — 三指标单次查询。
+    爬取进度列表 — 三指标单次查询，支持按类型和评分区间过滤。
+
+    查询参数：
+        type_num:    类型编号（可选）
+        interval_id: 评分区间（可选，如 "100:90"）
+        page:        页码（默认 1）
+        page_size:   每页条数（默认 100）
 
     返回字段：
         crawled_count  — douban_ids 实际入库数（ID 获取进度）
@@ -206,6 +216,7 @@ async def list_tasks():
         movie_credits.PK(movie_id,person_id) → JOIN
     """
     type_num = request.args.get("type_num", type=int)
+    interval_id = request.args.get("interval_id", "").strip()
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 100, type=int)
 
@@ -213,11 +224,15 @@ async def list_tasks():
     db = current_app.services.db
     raw = db.raw_mysql()
 
-    where = ""
+    where_clauses = []
     params = []
     if type_num:
-        where = "WHERE cp.type_num = %s"
+        where_clauses.append("cp.type_num = %s")
         params.append(type_num)
+    if interval_id:
+        where_clauses.append("cp.interval_id = %s")
+        params.append(interval_id)
+    where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
     count_sql = f"SELECT COUNT(*) AS total FROM crawl_progress cp {where}"
     count_rows = await raw.execute_query(count_sql, tuple(params))

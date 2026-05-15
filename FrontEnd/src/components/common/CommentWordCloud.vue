@@ -145,6 +145,21 @@ onBeforeUnmount(() => {
   min-height: 400px;
   border-radius: 8px;
   background: #fff;
+  position: relative;
+}
+
+.loading-container,
+.empty-container,
+.error-container {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .cloud-container {

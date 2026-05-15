@@ -6,10 +6,10 @@ export const adminStatusApi = {
 }
 
 export const adminQueueApi = {
-  get: (details?: boolean) =>
-    client.get<QueueStatus>('/admin/tasks/queue', { params: details ? { details: '1' } : {} }),
-  fetchDetails: () =>
-    client.get<QueueStatus>('/admin/tasks/queue', { params: { details: '1' } }),
+  get: (params?: { details?: boolean; admin_id?: number }) =>
+    client.get<QueueStatus>('/admin/tasks/queue', { params: params || {} }),
+  fetchDetails: (adminId?: number) =>
+    client.get<QueueStatus>('/admin/tasks/queue', { params: { details: '1', ...(adminId ? { admin_id: adminId } : {}) } }),
 }
 
 export interface LogEntry {
@@ -53,4 +53,9 @@ export interface RateLimitResponse {
 export const adminRateLimitApi = {
   list: (params: { minutes?: number; endpoint?: string }) =>
     client.get<RateLimitResponse>('/admin/rate-limit-events', { params }),
+}
+
+export const adminDebugApi = {
+  pushEvent: (data: { event_type: 'task_failure' | 'worker_crash' }) =>
+    client.post<{ success: boolean; event_type: string; message: string }>('/admin/debug/ws-event', data),
 }

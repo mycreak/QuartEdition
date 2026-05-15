@@ -137,6 +137,7 @@ async def me():
     role = "admin" if permissions else "user"
 
     return jsonify({
+        "id": user.id,
         "uuid": user.uuid,
         "username": user.username,
         "display_name": user.display_name,

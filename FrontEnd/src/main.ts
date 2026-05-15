@@ -1,7 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
-import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
@@ -11,9 +11,9 @@ import { setupGuards } from './router/guards'
 const zhCnOverride = {
   ...zhCn,
   el: {
-    ...(zhCn as Record<string, unknown>).el,
+    ...zhCn.el,
     pagination: {
-      ...((zhCn as Record<string, unknown>).el as Record<string, unknown>).pagination as Record<string, string>,
+      ...zhCn.el.pagination,
       total: '共计 {total} 条',
     },
   },

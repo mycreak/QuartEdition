@@ -50,7 +50,7 @@ class WsManager {
     this._cleanup()
     this._state.status = 'connecting'
 
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:5000/ws/notifications'
+    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/notifications'
     const url = `${wsUrl}?token=${encodeURIComponent(token)}`
 
     try {

@@ -104,6 +104,10 @@ class IdentityManager:
                 )
             else:
                 proxy_config = {"server": f"http://{proxy.host}:{proxy.port}"}
+                if proxy.username:
+                    proxy_config["username"] = proxy.username
+                if proxy.password:
+                    proxy_config["password"] = proxy.password
                 # 约束检查：cookie 的 allowed_regions 必须包含 proxy.region
                 if cookie_id:
                     account = self._cookie_manager.get(cookie_id)

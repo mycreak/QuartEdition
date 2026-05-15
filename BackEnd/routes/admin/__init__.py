@@ -41,6 +41,8 @@ movie_routes.py — 电影数据管理（查/编/上下架）
     POST   /admin/movies/<id>/regions  添加地区                                  [movie:manage]
     DELETE /admin/movies/<id>/regions/<region_id> 移除地区                       [movie:manage]
     PUT    /admin/movies/<id>/rating   更新评分                                  [movie:manage]
+    GET    /admin/regions              地区字典列表（id + name）                  [movie:manage]
+    POST   /admin/regions              创建新地区（含唯一性校验）                [movie:manage]
     依赖: MovieService, movies / movie_genres / crawl_progress 等表
 
 review_routes.py — 评论管理（MongoDB）
@@ -121,6 +123,7 @@ from .history_routes import history_bp
 from .log_routes import log_bp
 from .infra_routes import infra_bp
 from .douban_id_routes import douban_id_bp
+from .debug_routes import debug_bp
 
 admin_bp.register_blueprint(failure_bp)
 admin_bp.register_blueprint(task_bp)
@@ -132,6 +135,7 @@ admin_bp.register_blueprint(history_bp)
 admin_bp.register_blueprint(log_bp)
 admin_bp.register_blueprint(infra_bp)
 admin_bp.register_blueprint(douban_id_bp)
+admin_bp.register_blueprint(debug_bp)
 
 # 副作用导入（非直接引用）— 供 app.py 通过 `from routes.admin import init_task_failure_service` 访问
 from services.task_failure_service import init_task_failure_service

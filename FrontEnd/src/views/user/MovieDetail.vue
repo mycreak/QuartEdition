@@ -7,7 +7,7 @@
         <div class="detail-poster">
           <el-image
             v-if="detail.movie?.poster_url"
-            :src="detail.movie.poster_url"
+            :src="cleanUrl(detail.movie.poster_url)"
             fit="contain"
             referrerpolicy="no-referrer"
             class="poster-img"
@@ -87,21 +87,22 @@
       </div>
 
       <!-- AI 总结 -->
-      <div v-if="detail.ai_summary" class="section">
+      <div class="section">
         <h2 class="section-title">
           <el-icon style="color: #409eff; margin-right: 4px;"><MagicStick /></el-icon>
           AI 剧情总结
         </h2>
-        <p class="ai-summary">{{ detail.ai_summary }}</p>
+        <p v-if="detail.ai_summary" class="ai-summary">{{ detail.ai_summary }}</p>
+        <p v-else class="ai-summary empty">暂无AI总结</p>
       </div>
 
       <!-- AI 标签 -->
-      <div v-if="detail.ai_tags?.length" class="section">
+      <div class="section">
         <h2 class="section-title">
           <el-icon style="color: #67c23a; margin-right: 4px;"><CollectionTag /></el-icon>
           AI 标签
         </h2>
-        <div class="tag-row">
+        <div v-if="detail.ai_tags?.length" class="tag-row">
           <el-tag 
             v-for="tag in detail.ai_tags" 
             :key="tag" 
@@ -112,6 +113,7 @@
             {{ tag }}
           </el-tag>
         </div>
+        <p v-else class="empty">暂无AI标签</p>
       </div>
 
       <!-- 短评词云 -->
@@ -134,15 +136,15 @@
 
     <el-tabs v-model="activeTab" class="review-tabs">
       <el-tab-pane label="长评" name="reviews">
-        <div v-for="review in reviewList" :key="review.id" class="review-card">
+        <div v-for="review in reviewList" :key="review.id || review._id" class="review-card">
           <div class="review-card-header">
-            <span class="review-card-author">{{ review.author }}</span>
+            <span class="review-card-author">{{ review.author || '匿名用户' }}</span>
             <span v-if="review.rating" class="review-card-rating">
               <el-icon :size="14"><StarFilled /></el-icon>
               {{ formatRating(review.rating) }}
             </span>
           </div>
-          <p class="review-card-content">{{ review.content }}</p>
+          <p class="review-card-content">{{ review.content || review.text }}</p>
         </div>
         <div v-if="!reviewList.length && !reviewLoading" class="empty-tab">
           暂无内容
@@ -208,6 +210,14 @@ const route = useRoute()
 const store = useMovieStore()
 
 const detail = ref<MovieDetail | null>(null)
+
+/**
+ * 清理URL中的多余字符（反引号、空格等）
+ */
+function cleanUrl(url: string): string {
+  // 去掉前后的空格和反引号
+  return url.replace(/^[\s`]+|[\s`]+$/g, '')
+}
 const loading = ref(false)
 const error = ref('')
 
@@ -600,6 +610,14 @@ onMounted(async () => {
   color: #606266;
   padding: 8px 0 12px 0;
   text-indent: 2em;
+}
+.ai-summary.empty,
+.empty {
+  color: #c0c4cc;
+  text-align: center;
+  text-indent: 0;
+  padding: 32px 0;
+  margin: 0;
 }
 
 /* 关键词高亮 */

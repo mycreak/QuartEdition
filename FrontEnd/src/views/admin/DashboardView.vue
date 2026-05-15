@@ -140,6 +140,28 @@
         <div v-if="!logLoading && logs.length === 0" class="safe-ok">暂无日志</div>
       </div>
     </el-card>
+
+    <!-- 调试工具 -->
+    <el-card v-if="authStore.checkPermission('system:monitor')" class="section-card debug-card">
+      <template #header>
+        <div class="section-title">
+          🛠️ 调试工具
+          <el-tag size="small" type="warning" effect="plain" style="margin-left: 8px">仅开发/演示</el-tag>
+        </div>
+      </template>
+      <p class="debug-desc">模拟 WebSocket 推送事件，验证前端通知弹窗是否正常。</p>
+      <div class="debug-buttons">
+        <el-button type="danger" @click="debugPushEvent('task_failure')" :loading="debugTaskFailureLoading">
+          🔴 模拟任务失败通知
+        </el-button>
+        <el-button type="warning" @click="debugPushEvent('worker_crash')" :loading="debugWorkerCrashLoading">
+          🟡 模拟 Worker 崩溃
+        </el-button>
+      </div>
+      <p class="debug-hint">
+        task_failure → 仅当前管理员收到 · worker_crash → 全体管理员收到
+      </p>
+    </el-card>
   </div>
 </template>
 
@@ -150,7 +172,9 @@ import { adminStatusApi } from '@/api/admin/monitor'
 import { adminQueueApi } from '@/api/admin/monitor'
 import { adminLogsApi, type LogEntry } from '@/api/admin/monitor'
 import { adminRateLimitApi, type RateLimitEvent, type RateLimitResponse } from '@/api/admin/monitor'
+import { adminDebugApi } from '@/api/admin/monitor'
 import { wsManager } from '@/api/ws'
+import type { QueueStatus, InFlightTask } from '@/types/status'
 
 function typeLabel(t: string): string {
   const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取' }
@@ -168,7 +192,7 @@ const sys = reactive({
   proxy: undefined as { alive: number; suspicious: number; banned: number; total: number } | undefined,
 })
 
-const queue = reactive({ redis_size: 0, queue_size: 0, worker_busy: 0, worker_idle: 0 })
+const queue = reactive<QueueStatus>({ redis_size: 0, queue_size: 0, worker_busy: 0, worker_idle: 0, in_flight: [], queue_tasks: [], redis_tasks: [] })
 const queueLoading = ref(false)
 const showDetails = ref(false)
 const detailLoading = ref(false)
@@ -188,6 +212,24 @@ const memColor = computed(() => { const v = sys.memory_percent || 0; if (v > 85)
 let unsubStatus: (() => void) | null = null
 let unsubProgress: (() => void) | null = null
 let _lastWsUpdate = 0
+
+const debugTaskFailureLoading = ref(false)
+const debugWorkerCrashLoading = ref(false)
+
+async function debugPushEvent(eventType: 'task_failure' | 'worker_crash') {
+  const loadingKey = eventType === 'task_failure' ? debugTaskFailureLoading : debugWorkerCrashLoading
+  loadingKey.value = true
+  try {
+    const res = await adminDebugApi.pushEvent({ event_type: eventType })
+    const { ElMessage } = await import('element-plus')
+    ElMessage.success(res.data.message)
+  } catch (e: any) {
+    const { ElMessage } = await import('element-plus')
+    ElMessage.error(e?.response?.data?.error || '推送失败')
+  } finally {
+    loadingKey.value = false
+  }
+}
 
 async function fetchStatus() {
   try {
@@ -272,7 +314,7 @@ onMounted(() => {
 
   unsubProgress = wsManager.on('task_progress', (msg) => {
     if (!queue.in_flight) return
-    const task = queue.in_flight.find(t => t.task_id === msg.task_id)
+    const task = queue.in_flight.find((t: InFlightTask) => t.task_id === msg.task_id)
     if (task) {
       task.stage = msg.stage
     }
@@ -341,4 +383,9 @@ onUnmounted(() => {
 .log-time { color: #999; font-size: 12px; white-space: nowrap; }
 .log-category { color: #666; font-size: 12px; background: #f0f0f0; padding: 1px 6px; border-radius: 3px; }
 .log-msg { flex: 1; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.debug-card { border: 1px dashed #e6a23c; }
+.debug-desc { font-size: 13px; color: #666; margin: 0 0 12px; }
+.debug-buttons { display: flex; gap: 12px; }
+.debug-hint { font-size: 12px; color: #999; margin: 10px 0 0; }
 </style>

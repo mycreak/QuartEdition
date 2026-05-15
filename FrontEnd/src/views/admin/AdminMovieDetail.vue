@@ -123,7 +123,7 @@
         <el-form-item label="片名"><el-input v-model="editBasicForm.title" /></el-form-item>
         <el-form-item label="豆瓣 ID"><el-input v-model="editBasicForm.douban_id" /></el-form-item>
         <el-form-item label="上映年份"><el-input-number v-model="editBasicForm.release_year" :min="1900" :max="2099" style="width:100%" /></el-form-item>
-        <el-form-item label="海报 URL"><el-input v-model="editBasicForm.poster_url" placeholder="如 http://img3.doubanio.com/..." /></el-form-item>
+        <el-form-item label="海报封面"><PosterUpload v-model="editBasicForm.poster_url" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editBasicVisible = false">取消</el-button>
@@ -166,13 +166,14 @@
     <!-- ═══════ 添加地区弹窗 ═══════ -->
     <el-dialog v-model="addRegionVisible" title="添加地区" width="400px">
       <el-form :model="addRegionForm" label-position="top">
-        <el-form-item label="地区 ID">
-          <el-input-number v-model="addRegionForm.region_id" :min="1" style="width:100%" placeholder="地区表 ID" />
-        </el-form-item>
-        <el-form-item label="地区名（选填，仅作提示）">
-          <el-select v-model="addRegionName" placeholder="从已有地区中选择" style="width:100%" filterable allow-create>
-            <el-option v-for="r in detail?.regions || []" :key="r.id" :label="r.name" :value="r.name" />
+        <el-form-item label="地区">
+          <el-select v-model="addRegionForm.region_id" placeholder="选择现有地区" style="width:100%" filterable :loading="allRegionsLoading">
+            <el-option v-for="r in allRegions" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="添加新地区">
+          <el-input v-model="addRegionForm.name" placeholder="输入新地区名称，如中国香港" />
+          <div class="form-hint">若上方未找到需要的地区，可在此输入新名称添加</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -196,16 +197,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import client from '@/api/client'
 import { adminMoviesApi } from '@/api/admin/movies'
 import { adminReviewsApi } from '@/api/admin/reviews'
 import type { MovieDetail, Person } from '@/types/movie'
 import ErrorAlert from '@/components/common/ErrorAlert.vue'
 import { formatRating, formatCount, formatCrewRole } from '@/utils/format'
 import { StarFilled, VideoCamera, Edit, Plus, Close } from '@element-plus/icons-vue'
+import PosterUpload from '@/components/common/PosterUpload.vue'
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作', 6: '情色', 7: '歌舞', 8: '儿童', 10: '悬疑', 11: '剧情',
@@ -251,8 +254,12 @@ const addGenreTypeNum = ref<number | ''>('')
 /* ── 添加地区 ── */
 const addRegionVisible = ref(false)
 const addRegionSaving = ref(false)
-const addRegionName = ref('')
-const addRegionForm = ref({ region_id: undefined as number | undefined })
+const allRegions = ref<{ id: number; name: string }[]>([])
+const allRegionsLoading = ref(false)
+const addRegionForm = ref({ 
+  region_id: undefined as number | undefined,
+  name: ''
+})
 
 /* ── 编辑评分 ── */
 const editRatingVisible = ref(false)
@@ -437,21 +444,80 @@ async function removeGenre(g: { id: number; name: string }) {
 }
 
 /* ── 地区 ── */
+async function fetchAllRegions() {
+  allRegionsLoading.value = true
+  try {
+    const res = await client.get<{ items: { id: number; name: string }[] }>('/admin/regions')
+    allRegions.value = res.data.items || []
+  } catch {
+    ElMessage.error('加载地区列表失败')
+  } finally {
+    allRegionsLoading.value = false
+  }
+}
+
 function openAddRegion() {
-  addRegionForm.value = { region_id: undefined }
-  addRegionName.value = ''
+  addRegionForm.value = { region_id: undefined, name: '' }
+  fetchAllRegions()
   addRegionVisible.value = true
 }
 
+// 地区字段联动逻辑
+watch(() => addRegionForm.value.region_id, (newVal) => {
+  if (newVal !== undefined && addRegionForm.value.name.trim()) {
+    addRegionForm.value.name = ''
+  }
+})
+
+watch(() => addRegionForm.value.name, (newVal) => {
+  if (newVal.trim() && addRegionForm.value.region_id !== undefined) {
+    addRegionForm.value.region_id = undefined
+  }
+})
+
 async function submitAddRegion() {
-  if (!addRegionForm.value.region_id) { ElMessage.warning('请输入地区 ID'); return }
+  if (!addRegionForm.value.region_id && !addRegionForm.value.name.trim()) { 
+    ElMessage.warning('请选择现有地区或输入新地区名称'); 
+    return 
+  }
+  
   addRegionSaving.value = true
   try {
-    await adminMoviesApi.addRegion(movieId, { region_id: addRegionForm.value.region_id })
-    ElMessage.success('地区已添加')
+      let regionId = addRegionForm.value.region_id
+      let extraMessage = ''
+      // 如果输入了新地区名称，先创建新地区
+      if (addRegionForm.value.name.trim()) {
+        const createRes = await client.post<{ 
+          success: boolean; 
+          region: { id: number; name: string }; 
+          is_new: boolean;
+          message?: string 
+        }>('/admin/regions', {
+          name: addRegionForm.value.name.trim()
+        })
+        regionId = createRes.data.region.id
+        extraMessage = createRes.data.message || ''
+      }
+      
+      if (!regionId) {
+        ElMessage.error('地区 ID 无效')
+        return
+      }
+      
+      await adminMoviesApi.addRegion(movieId, {
+        region_id: regionId,
+      })
+      
+      if (extraMessage) {
+        ElMessage.success(extraMessage)
+      } else {
+        ElMessage.success('地区已添加')
+      }
     addRegionVisible.value = false
     await loadDetail()
-  } catch (e: any) { ElMessage.error(e?.response?.data?.error || '添加失败') }
+  } catch (e: any) { 
+    ElMessage.error(e?.response?.data?.error || '添加失败') 
+  }
   finally { addRegionSaving.value = false }
 }
 
