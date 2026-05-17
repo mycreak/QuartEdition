@@ -7,6 +7,7 @@
  *   task_failure   — 任务失败时推送给提交者
  *   task_success   — 任务成功时推送给提交者
  *   worker_crash   — Worker 崩溃时广播全体管理员
+ *   storage_alert  — DB 写入异常突增时广播全体管理员
 
  * 特性:
  *   - 单例模式（全局唯一连接）

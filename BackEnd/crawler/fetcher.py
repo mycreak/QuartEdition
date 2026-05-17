@@ -223,10 +223,19 @@ class BrowserFetcher:
         proxy_config = None
 
         if identity is not None:
-            cookie_id = identity.cookie_id
-            proxy_key = identity.proxy_key
-            storage_state = identity.storage_state or None
-            proxy_config = identity.proxy_config or None
+            if not hasattr(identity, "cookie_id"):
+                logger.error(
+                    f"fetch_page 收到非法的 identity 对象: "
+                    f"type={type(identity).__name__} "
+                    f"module={getattr(identity, '__name__', 'N/A')} "
+                    f"dir={[a for a in dir(identity) if not a.startswith('_')][:10]}"
+                )
+                identity = None
+            else:
+                cookie_id = identity.cookie_id
+                proxy_key = identity.proxy_key
+                storage_state = identity.storage_state or None
+                proxy_config = identity.proxy_config or None
 
         snapshot = {
             "url": url,

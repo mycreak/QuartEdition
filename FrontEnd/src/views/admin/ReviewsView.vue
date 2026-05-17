@@ -17,6 +17,20 @@
       >
         <el-option v-for="m in movieOptions" :key="m.movie_id" :label="m.title" :value="m.movie_id" />
       </el-select>
+      <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" style="width: 140px">
+        <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
+      </el-select>
+      <el-input v-model="yearFilter" placeholder="年份" clearable class="year-input" maxlength="4" @blur="onYearFilterChange" @keyup.enter="onYearFilterChange" />
+      <el-select v-model="regionFilter" placeholder="全部国家/地区" clearable class="filter-select" style="width: 150px">
+        <el-option v-for="r in allRegions" :key="r.id" :label="r.name" :value="r.id" />
+      </el-select>
+      <el-select v-model="ratingFilter" placeholder="全部评分" clearable class="filter-select" style="width: 130px">
+        <el-option label="9分及以上" value="100:90" />
+        <el-option label="8-9分" value="90:80" />
+        <el-option label="7-8分" value="80:70" />
+        <el-option label="6-7分" value="70:60" />
+        <el-option label="6分以下" value="60:0" />
+      </el-select>
       <el-select v-model="publishedFilter" placeholder="上下架" clearable class="filter-select" style="width: 130px">
         <el-option label="已上架" value="published" />
         <el-option label="已下架" value="unpublished" />
@@ -87,6 +101,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { adminReviewsApi, type AdminReview, type AdminComment } from '@/api/admin/reviews'
+import client from '@/api/client'
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -96,8 +111,27 @@ const queryMovieId = route.query.movie_id ? Number(route.query.movie_id) : undef
 
 const activeTab = ref(queryTab && ['reviews', 'comments'].includes(queryTab) ? queryTab : 'reviews')
 
+const TYPE_MAP: Record<number, string> = {
+  1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作',
+  6: '情色', 7: '歌舞', 8: '儿童', 10: '悬疑', 11: '剧情',
+  12: '灾难', 13: '爱情', 14: '音乐', 15: '冒险', 16: '奇幻',
+  17: '科幻', 18: '运动', 19: '惊悚', 20: '恐怖', 22: '战争',
+  23: '短片', 24: '喜剧', 25: '动画', 27: '西部', 28: '家庭',
+  29: '武侠', 30: '古装', 31: '黑色电影',
+}
+
+const typeOptions = Object.entries(TYPE_MAP).map(
+  ([num, name]) => ({ type_num: Number(num), type_name: name })
+)
+
+const allRegions = ref<{ id: number; name: string }[]>([])
+
 // 电影下拉筛选
 const movieIdFilter = ref<number | undefined>(queryMovieId)
+const typeFilter = ref<number | undefined>(undefined)
+const yearFilter = ref('')
+const regionFilter = ref<number | undefined>(undefined)
+const ratingFilter = ref('')
 const publishedFilter = ref<string | undefined>()
 const movieOptions = ref<{ movie_id: number; title: string }[]>([])
 const movieOptionsLoading = ref(false)
@@ -112,6 +146,13 @@ const comments = ref<AdminComment[]>([])
 const comPage = ref(1)
 const comTotal = ref(0)
 const comLoading = ref(false)
+
+async function fetchAllRegions() {
+  try {
+    const res = await client.get<{ id: number; name: string }[]>('/admin/regions')
+    allRegions.value = res.data || []
+  } catch { /* ignore */ }
+}
 
 // 加载电影选项列表（下拉数据源）
 async function fetchMovieOptions(keyword = '') {
@@ -132,8 +173,14 @@ function searchMovies(query: string) {
   movieSearchTimer = setTimeout(() => fetchMovieOptions(query.trim()), 300)
 }
 
+// 年份筛选：失焦/回车时触发查询
+function onYearFilterChange() {
+  fetchReviews(1)
+  fetchComments(1)
+}
+
 // 监听筛选变化，刷新评论列表
-watch([movieIdFilter, publishedFilter], () => {
+watch([movieIdFilter, typeFilter, regionFilter, publishedFilter, ratingFilter], () => {
   fetchReviews(1)
   fetchComments(1)
 })
@@ -143,6 +190,13 @@ async function fetchReviews(p = 1) {
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
     if (movieIdFilter.value) params.movie_id = movieIdFilter.value
+    if (typeFilter.value) params.type_num = typeFilter.value
+    if (yearFilter.value) {
+      const y = parseInt(yearFilter.value, 10)
+      if (!isNaN(y)) params.release_year = y
+    }
+    if (regionFilter.value !== undefined) params.region_id = regionFilter.value
+    if (ratingFilter.value) params.interval_ids = ratingFilter.value
     if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
     const res = await adminReviewsApi.reviews(params as any)
     reviews.value = res.data.items
@@ -156,6 +210,13 @@ async function fetchComments(p = 1) {
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
     if (movieIdFilter.value) params.movie_id = movieIdFilter.value
+    if (typeFilter.value) params.type_num = typeFilter.value
+    if (yearFilter.value) {
+      const y = parseInt(yearFilter.value, 10)
+      if (!isNaN(y)) params.release_year = y
+    }
+    if (regionFilter.value !== undefined) params.region_id = regionFilter.value
+    if (ratingFilter.value) params.interval_ids = ratingFilter.value
     if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
     const res = await adminReviewsApi.comments(params as any)
     comments.value = res.data.items
@@ -187,6 +248,7 @@ async function toggleCommentPublish(row: AdminComment) {
 }
 
 onMounted(async () => {
+  await fetchAllRegions()
   await fetchMovieOptions()
   fetchReviews()
   fetchComments()
@@ -194,10 +256,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.admin-reviews { max-width: 1100px; }
+.admin-reviews { max-width: 1280px; }
 .page-title { font-size: 22px; color: #1a1a2e; margin: 0 0 20px; }
-.toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
-.movie-filter { width: 280px; }
-.rating-cell { color: #e8a838; font-weight: 600; }
+.toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.filter-select { width: 120px; }
+.year-input { width: 100px; }
 .paginator { margin-top: 16px; justify-content: flex-end; }
 </style>

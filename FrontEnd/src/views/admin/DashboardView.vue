@@ -211,6 +211,8 @@ const memColor = computed(() => { const v = sys.memory_percent || 0; if (v > 85)
 
 let unsubStatus: (() => void) | null = null
 let unsubProgress: (() => void) | null = null
+let unsubStorageAlert: (() => void) | null = null
+let unsubTaskStarted: (() => void) | null = null
 let _lastWsUpdate = 0
 
 const debugTaskFailureLoading = ref(false)
@@ -241,7 +243,7 @@ async function fetchStatus() {
 async function fetchQueue(details = false) {
   queueLoading.value = true
   try {
-    const res = await adminQueueApi.get(details)
+    const res = await adminQueueApi.get(details ? { details: true } : {})
     Object.assign(queue, res.data)
   } catch { /* ignore */ } finally { queueLoading.value = false }
 }
@@ -319,6 +321,19 @@ onMounted(() => {
       task.stage = msg.stage
     }
   })
+
+  unsubStorageAlert = wsManager.on('storage_alert', async (msg) => {
+    const { ElMessage } = await import('element-plus')
+    ElMessage.warning({
+      message: msg.message || '数据库写入异常，请检查 MySQL/Redis/MongoDB 连接',
+      duration: 0,
+      showClose: true,
+    })
+  })
+
+  unsubTaskStarted = wsManager.on('task_started', () => {
+    fetchQueue()
+  })
 })
 
 onUnmounted(() => {
@@ -326,6 +341,10 @@ onUnmounted(() => {
   unsubStatus = null
   unsubProgress?.()
   unsubProgress = null
+  unsubStorageAlert?.()
+  unsubStorageAlert = null
+  unsubTaskStarted?.()
+  unsubTaskStarted = null
 })
 </script>
 

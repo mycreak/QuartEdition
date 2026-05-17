@@ -64,7 +64,7 @@ class ReviewService:
 
     async def list_reviews(
         self,
-        movie_id: Optional[int] = None,
+        movie_ids: Optional[List[int]] = None,
         published_only: bool = False,
         page: int = 1,
         page_size: int = 20,
@@ -73,7 +73,7 @@ class ReviewService:
         长评列表。
 
         输入：
-            movie_id:      可选，按本地电影ID过滤
+            movie_ids:     可选，按本地电影ID列表过滤（None=不过滤，空列表=无结果）
             published_only: True=只返回已上架, False=全部（管理端）
             page/page_size: 分页
         输出：(items, total)
@@ -81,8 +81,11 @@ class ReviewService:
         query: Dict[str, Any] = {}
         if published_only:
             query["is_published"] = True
-        if movie_id:
-            query["movie_id"] = movie_id
+        if movie_ids is not None:
+            if len(movie_ids) == 1:
+                query["movie_id"] = movie_ids[0]
+            else:
+                query["movie_id"] = {"$in": movie_ids}
 
         projection = dict(_MONGO_PROJECTION_REVIEWS)
         if published_only:
@@ -111,7 +114,7 @@ class ReviewService:
 
     async def list_comments(
         self,
-        movie_id: Optional[int] = None,
+        movie_ids: Optional[List[int]] = None,
         rating: Optional[float] = None,
         published_only: bool = False,
         page: int = 1,
@@ -121,7 +124,7 @@ class ReviewService:
         短评列表。
 
         输入：
-            movie_id:      可选
+            movie_ids:     可选，按本地电影ID列表过滤（None=不过滤，空列表=无结果）
             rating:        可选，按评分过滤
             published_only: True=只返回已上架
             page/page_size: 分页
@@ -130,8 +133,11 @@ class ReviewService:
         query: Dict[str, Any] = {}
         if published_only:
             query["is_published"] = True
-        if movie_id:
-            query["movie_id"] = movie_id
+        if movie_ids is not None:
+            if len(movie_ids) == 1:
+                query["movie_id"] = movie_ids[0]
+            else:
+                query["movie_id"] = {"$in": movie_ids}
         if rating:
             query["rating"] = rating
 

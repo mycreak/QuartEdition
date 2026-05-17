@@ -53,6 +53,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 REVIEW_DETAIL_URL = "https://movie.douban.com/review/{review_id}/"
+REVIEW_FULL_API = "https://movie.douban.com/j/review/{review_id}/full"
 REVIEW_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/reviews"
 COMMENT_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/comments"
 SUBJECT_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/"
@@ -459,11 +460,6 @@ class CrawlerEngine:
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法访问 movie_review 表")
 
-        # 解析可选的 identity
-        identity = None
-        if self._identity_manager is not None and (cookie_id or proxy_key):
-            identity = await self._identity_manager.resolve(cookie_id, proxy_key)
-
         raw = self._movie_service.db.raw_mysql()
 
         # 解析 movie_id：优先请求参数，未传则用 douban_id 查询
@@ -566,12 +562,12 @@ class CrawlerEngine:
 
     async def _handle_review_body_crawl(self, data: dict) -> None:
         """
-        长评正文爬取 — 单条模式。
+        长评正文爬取 — 单条模式（v5：API JSON 接口代替浏览器 HTML）。
 
-        输入：{review_id, movie_id?, douban_id|subject_id, title, author, date, useful_count, cookie_id?, proxy_key?}
+        输入：{review_id, movie_id?, douban_id|subject_id, title, author, date, useful_count}
         副作用：
-            BrowserFetcher 爬取详情页 → parse → MongoDB upsert → UPDATE movie_review status='done'/'failed'
-            → 检查是否触发 AI 总结
+            ApiFetcher 拉取 /j/review/{id}/full → parse_review_full → MongoDB upsert
+            → UPDATE movie_review status='done'/'failed' → 检查是否触发 AI 总结
 
         设计决策（v4 — 改回单条模式）：
             - 每条长评一个独立任务，间隔由 worker_rest（120~300s 随机）保证
@@ -585,8 +581,6 @@ class CrawlerEngine:
         author = data.get("author", "")
         date_str = data.get("date", "")
         useful_count = data.get("useful_count", 0)
-        cookie_id = data.get("cookie_id", "")
-        proxy_key = data.get("proxy_key", "")
 
         logger.info(
             f"[review_body_crawl] task={task_id} review_id={review_id} "
@@ -628,24 +622,26 @@ class CrawlerEngine:
             await self._check_and_trigger_ai_summary(movie_id)
             return
 
-        # ① 爬取长评详情页（增强版：等待加载 + 展开全文）
+        # ① 爬取长评正文（API JSON 接口，用 ApiFetcher 拉取 dict）
         try:
-            async with self._browser_sem:
-                detail_url = REVIEW_DETAIL_URL.format(review_id=review_id)
-                html = await self._browser.fetch_review_body(detail_url, identity=identity)
-                if not html or len(html) < 500:
-                    raise RuntimeError(f"长评页面内容过短: review_id={review_id}")
-
+            async with self._api_sem:
+                api_url = REVIEW_FULL_API.format(review_id=review_id)
+                data_api = await self._api.fetch(api_url)
+                if not isinstance(data_api, dict):
+                    raise RuntimeError(
+                        f"长评API返回非dict: review_id={review_id} "
+                        f"type={type(data_api).__name__}"
+                    )
         except Exception as e:
-            logger.error(f"[review_body_crawl] review_id={review_id} 页面请求失败: {e}")
+            logger.error(f"[长评正文爬取] review_id={review_id} API请求失败: {e}")
             await raw.execute_update(
                 "UPDATE movie_review SET status='failed' WHERE review_id=%s",
                 (review_id,),
             )
             raise
 
-        # ② 解析内容
-        parsed = parse_review_full(html)
+        # ② 解析内容 (parse_review_full 期望 dict，现在传入的是 API JSON)
+        parsed = parse_review_full(data_api)
         parsed["review_id"] = review_id
         parsed["title"] = title
         parsed["author"] = author
@@ -667,12 +663,6 @@ class CrawlerEngine:
         else:
             logger.error(f"[review_body_crawl] review_id={review_id} MongoDB 写入失败，保持 pending")
             raise RuntimeError(f"长评 MongoDB 写入失败: review_id={review_id}")
-
-        if cookie_id and self._identity_manager is not None:
-            try:
-                await self._identity_manager._cookie_manager.report_success(cookie_id)
-            except Exception:
-                pass
 
     async def _handle_comment_crawl(self, data: dict) -> None:
         task_id = data.get("id")

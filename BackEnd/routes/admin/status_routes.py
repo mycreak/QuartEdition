@@ -105,12 +105,21 @@ async def system_status():
     try:
         from crawler.cookie_manager import get_cookie_manager
         mgr = get_cookie_manager()
+        # 确保 CookieManager 已加载（防止未初始化）
+        await mgr.load()
         accounts = mgr.list_all()
-        active = [a for a in accounts if a["state"] == "active"]
+        active = [a for a in accounts if a["state"] == "active" and a["enabled"]]
         status["cookie_saved_at"] = active[0].get("saved_at") if active else None
-        status["cookie_has_dbcl2"] = any(a.get("dbcl2_preview") for a in accounts)
+        # 更宽松的 dbcl2_preview 检测：去空格、去引号后检查长度
+        def _has_dbcl2(val):
+            if not val:
+                return False
+            val_stripped = val.strip().strip('"').strip("'")
+            return len(val_stripped) > 10
+        status["cookie_has_dbcl2"] = any(_has_dbcl2(a.get("dbcl2_preview")) for a in accounts)
         status["cookie_valid"] = len(active) > 0
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Cookie 状态获取失败: {e}")
         status["cookie_saved_at"] = None
         status["cookie_has_dbcl2"] = False
         status["cookie_valid"] = False

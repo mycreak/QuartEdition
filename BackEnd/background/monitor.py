@@ -74,6 +74,11 @@ class Monitor:
         self.failure_count = 0
         self.cancelled_count = 0
 
+        # storage 层失败统计
+        #   主路径：Redis ZSET（monitor:storage_failures）5分钟滑动窗口
+        #   降级：Redis 不可用时内存 list 兜底
+        self._storage_failures_fallback: list[dict] = []
+
     @property
     def state(self) -> str:
         return self._state.value
@@ -168,6 +173,7 @@ class Monitor:
             report["events_success_total"] = self.success_count
             report["events_failure_total"] = self.failure_count
             report["events_cancelled_total"] = self.cancelled_count
+            report["events_storage_failures"] = await self._get_storage_failure_count()
         except Exception as e:
             report["events_error"] = str(e)
 
@@ -187,6 +193,29 @@ class Monitor:
             report["db_mongodb"] = db_health["mongodb"]
         except Exception as e:
             report["db_error"] = str(e)
+
+        # ── 6b. Cookie 健康检查 ──
+        try:
+            from crawler.cookie_manager import get_cookie_manager
+            mgr = get_cookie_manager()
+            # 确保加载过
+            await mgr.load()
+            accounts = mgr.list_all()
+            active = [a for a in accounts if a["state"] == "active" and a["enabled"]]
+            report["cookie_saved_at"] = active[0].get("saved_at") if active else None
+            
+            def _has_dbcl2(val):
+                if not val:
+                    return False
+                val_stripped = val.strip().strip('"').strip("'")
+                return len(val_stripped) > 10
+            report["cookie_has_dbcl2"] = any(_has_dbcl2(a.get("dbcl2_preview")) for a in accounts)
+            report["cookie_valid"] = len(active) > 0
+        except Exception as e:
+            report["cookie_saved_at"] = None
+            report["cookie_has_dbcl2"] = False
+            report["cookie_valid"] = False
+            logger.debug(f"Cookie 状态采集失败: {e}")
 
         # ── 7. 输出报告 + WS 广播 ──
         self._log_report(report)
@@ -275,6 +304,9 @@ class Monitor:
                 failure_layer=layer,
                 snapshot=event.snapshot,
             )
+            # storage 层失败 → 检查 DB 连接 + 追踪计数
+            if layer == "storage":
+                await self._check_storage_failure(event, reason=event.reason)
         except Exception:
             logger.exception("写入失败事件到 MySQL 失败")
 
@@ -317,6 +349,118 @@ class Monitor:
             except Exception:
                 logger.exception(f"WebSocket 推送失败: admin_id={admin_id}")
 
+    async def _get_storage_failure_count(self) -> int:
+        """
+        查询当前滑动窗口内 storage 失败次数（优先 Redis，降级内存）。
+        """
+        now = time.time()
+        try:
+            r = self.db.raw_redis()
+            return await r.zcount(
+                "monitor:storage_failures",
+                now - self.config.storage_window_seconds, now,
+            )
+        except Exception:
+            return len(self._storage_failures_fallback)
+
+    async def _check_storage_failure(self, event: WorkerEvent, *, reason: str) -> None:
+        """
+        storage 层失败处理 — DB 连接检查 + Redis ZSET 滑动窗口计数 + 阈值广播。
+
+        设计：
+            主路径：Redis ZSET（monitor:storage_failures）
+                - 每个失败事件以 timestamp 为 score 写入
+                - ZREMRANGEBYSCORE 自动清理 5 分钟前的旧数据
+                - 窗口内 ≥ 3 次 → 广播全体管理员
+                - 冷却：Redis key monitor:storage_alert_cooldown，TTL 120s
+
+            降级路径：Redis 不可用时
+                - 内存 dict 累加（不自动清理，只记数量）
+
+        输入：
+            event:  WorkerEvent (FAILURE, kind=storage)
+            reason: 失败原因文本
+        副作用：
+            Redis ZADD / 内存累加
+            触发阈值时 ERROR 日志 + WS broadcast
+        """
+        # ① DB 连接健康检查
+        db_report = await self.db.ping_all()
+        db_failed = [k for k, v in db_report.items() if not v]
+
+        if db_failed:
+            logger.warning(
+                "DB健康检查异常（storage 失败后）: %s 不可用，失败原因: %s",
+                ", ".join(db_failed), reason[:200],
+            )
+        else:
+            logger.warning(
+                "DB健康检查正常但 storage 写入失败: %s", reason[:200],
+            )
+
+        # ② 累加计数（Redis 优先，降级内存）
+        now = time.time()
+        cfg = self.config
+        window_start = now - cfg.storage_window_seconds
+
+        try:
+            r = self.db.raw_redis()
+            redis_key = "monitor:storage_failures"
+            cooldown_key = "monitor:storage_alert_cooldown"
+
+            entry = json.dumps({
+                "reason": reason[:200],
+                "db_failed": db_failed,
+                "task_id": self._extract_task_meta(event.task)[1],
+                "ts": now,
+            }, ensure_ascii=False)
+
+            await r.zadd(redis_key, {entry: now})
+            await r.zremrangebyscore(redis_key, "-inf", window_start)
+            await r.expire(redis_key, 600)
+
+            count = await r.zcount(redis_key, window_start, now)
+            in_cooldown = await r.exists(cooldown_key)
+
+            if count >= cfg.storage_alert_threshold and not in_cooldown:
+                await r.setex(cooldown_key, cfg.storage_alert_cooldown, "1")
+                window_minutes = cfg.storage_window_seconds // 60
+                logger.error(
+                    "⚠️ STORAGE 层失败突增！%s分钟内累计 %s 次 storage 错误，"
+                    "可能数据库连接异常。请检查 MySQL/Redis/MongoDB 状态。",
+                    window_minutes, count,
+                )
+                if self.ws_manager:
+                    try:
+                        await self.ws_manager.broadcast({
+                            "type": "storage_alert",
+                            "severity": "error",
+                            "message": (
+                                f"数据库写入异常，{window_minutes}分钟内累计 "
+                                f"{count} 次 storage 层失败"
+                            ),
+                            "db_failed": db_failed,
+                            "timestamp": now,
+                        })
+                    except Exception:
+                        logger.exception("storage 告警 WS 广播失败")
+
+        except Exception:
+            # Redis 不可用 → 降级到内存累加
+            logger.debug("Redis 不可用，storage 失败计数降级到内存")
+            self._storage_failures_fallback.append({
+                "db_failed": db_failed,
+                "reason": reason[:200],
+                "task_id": self._extract_task_meta(event.task)[1],
+                "timestamp": now,
+            })
+            # 简单阈值（手动清理窗口复杂，只记数量）
+            fb_count = len(self._storage_failures_fallback)
+            if fb_count > 0 and fb_count % 5 == 0:
+                logger.error(
+                    "⚠️ STORAGE 层失败（Redis降级模式）：内存累计 %s 次", fb_count,
+                )
+
     def _log_report(self, report: dict):
         """输出本轮监控报告。"""
         parts = []
@@ -341,16 +485,40 @@ class Monitor:
 
     async def _push_task_started(self, event: WorkerEvent) -> None:
         """
-        任务开始执行 → 更新 task_history 为 running。
+        任务开始执行 → 更新 task_history 为 running + WS 推送提交者。
+
+        输入：WorkerEvent（STARTED 类型）
+        副作用：UPDATE task_history + WS push 到 admin_id
         """
-        _, task_id = self._extract_task_meta(event.task)
+        admin_id, task_id = self._extract_task_meta(event.task)
         if not task_id:
             return
+
         try:
             from services.task_history_service import _get_history_service
             await _get_history_service().update_status(task_id=task_id, status="running")
         except Exception:
             pass
+
+        if self.ws_manager and admin_id > 0:
+            try:
+                task_type = ""
+                label = ""
+                try:
+                    tdata = json.loads(event.task)
+                    task_type = tdata.get("type", "")
+                    label = tdata.get("label", "") or tdata.get("title", "") or tdata.get("douban_id", "")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                await self.ws_manager.push(admin_id, {
+                    "type": "task_started",
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "label": label,
+                    "timestamp": event.timestamp,
+                })
+            except Exception:
+                logger.exception(f"task_started WS 推送失败: admin_id={admin_id}")
 
     async def _push_task_stage_change(self, event: WorkerEvent) -> None:
         """
@@ -453,11 +621,14 @@ class Monitor:
             "worker_idle", "worker_busy",
             "worker_alive", "worker_dead", "worker_stuck", "worker_crashed_total",
             "events_success_total", "events_failure_total", "events_cancelled_total",
+            "events_storage_failures",
             "cpu_percent", "memory_percent",
             "db_mysql", "db_redis", "db_mongodb",
             "puller_state", "puller_fetched", "puller_empty_polls",
             "puller_backpressure_count", "puller_backpressure_duration",
             "puller_error", "queue_error", "worker_error", "events_error", "system_error",
+            # Cookie 相关
+            "cookie_saved_at", "cookie_has_dbcl2", "cookie_valid",
         }
         safe_report = {k: v for k, v in report.items() if k in safe_keys}
 

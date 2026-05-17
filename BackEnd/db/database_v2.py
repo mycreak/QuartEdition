@@ -786,6 +786,21 @@ class RedisRawAccessV2:
     async def zrange(self, key: str, start: int, end: int, **kwargs):
         return await get_redis().zrange(key, start, end, **kwargs)
 
+    async def zremrangebyscore(self, key: str, min_score: str, max_score: float) -> int:
+        return await get_redis().zremrangebyscore(key, min_score, max_score)
+
+    async def zcount(self, key: str, min_score: float, max_score: float) -> int:
+        return await get_redis().zcount(key, min_score, max_score)
+
+    async def setex(self, key: str, ttl: int, value: str) -> None:
+        return await get_redis().setex(key, ttl, value)
+
+    async def expire(self, key: str, ttl: int) -> None:
+        return await get_redis().expire(key, ttl)
+
+    async def exists(self, key: str) -> int:
+        return await get_redis().exists(key)
+
     async def eval(self, script: str, keys: list, args: list):
         return await get_redis().eval(script, len(keys), *keys, *args)
 

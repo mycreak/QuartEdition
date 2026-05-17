@@ -6,11 +6,12 @@ utils/logging_config.py
 用途：
     按三层架构自动分类日志，便于前后端联调时按层次查看。
 
-分类规则（三层架构）：
+分类规则（四层架构）：
     access      接入层    → access.log     谁在敲门：API 路由 / WebSocket / 服务器
-    service     业务层    → service.log    干了什么：注册、爬取、搜索等业务逻辑
+    crawler     爬虫层    → crawler.log    爬虫执行：翻页/解析/入库/AI
+    service     业务层    → service.log    干了什么：注册、搜索等非爬虫业务逻辑
     infra       基础设施   → infra.log      底座是否正常：数据库 / 任务调度 / 工具
-    所有 ERROR+ 汇总      → error.log     跨三层的错误快速定位
+    所有 ERROR+ 汇总      → error.log     跨四层的错误快速定位
 
 使用方式（app.py）：
     from utils.logging_config import setup_logging
@@ -18,7 +19,7 @@ utils/logging_config.py
 
 环境变量（.env）：
     LOG_DIR=logs          — 日志目录（相对 BackEnd/）
-    LOG_LEVEL=INFO        — 控制台最低级别
+    LOG_LEVEL=WARNING      — 控制台最低级别，默认 WARNING
     LOG_FORMAT=json       — json（生产）| txt（开发）
     LOG_TO_FILE=true      — 是否写文件
     LOG_BACKUP_DAYS=30    — 文件保留天数
@@ -38,8 +39,9 @@ CST = timezone(timedelta(hours=8))
 
 
 class LogCategory(str, Enum):
-    """三层架构分类，同时也是文件名（不含后缀）。"""
+    """四层架构分类，同时也是文件名（不含后缀）。"""
     ACCESS = "access"
+    CRAWLER = "crawler"
     SERVICE = "service"
     INFRA = "infra"
     ERROR = "error"
@@ -48,10 +50,8 @@ class LogCategory(str, Enum):
 _CATEGORY_MAP: dict[str, LogCategory] = {
     "routes.": LogCategory.ACCESS,
     "hypercorn": LogCategory.ACCESS,
+    "crawler.": LogCategory.CRAWLER,
     "services.": LogCategory.SERVICE,
-    # crawler.* 与 services.* 同归 SERVICE → 混在 service.log
-    # 若爬虫高频生产，建议新增 CRAWLER 分类独立 crawler.log
-    "crawler.": LogCategory.SERVICE,
     "db.": LogCategory.INFRA,
     "background.": LogCategory.INFRA,
     "utils.": LogCategory.INFRA,
@@ -74,6 +74,12 @@ class CategoryFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         return _get_category(record.name) == self.category
+
+
+class AccessConsoleFilter(logging.Filter):
+    """阻止接入层日志出现在终端，但保留在文件。"""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _get_category(record.name) != LogCategory.ACCESS
 
 
 class JsonFormatter(logging.Formatter):
@@ -111,7 +117,7 @@ def _setup_handlers(
     use_json: bool,
     backup_days: int,
 ) -> list[logging.Handler]:
-    """创建并返回所有 handler（控制台 + 三层架构文件 + 错误汇总）。
+    """创建并返回所有 handler（控制台 + 四层架构文件 + 错误汇总）。
 
     输入：
         log_dir     — 日志文件输出目录
@@ -129,6 +135,7 @@ def _setup_handlers(
     console = logging.StreamHandler()
     console.setFormatter(formatter)
     console.setLevel(log_level)
+    console.addFilter(AccessConsoleFilter())
     handlers.append(console)
 
     if os.getenv("LOG_TO_FILE", "true").lower() == "true":
@@ -136,6 +143,7 @@ def _setup_handlers(
 
         for category in (
             LogCategory.ACCESS,
+            LogCategory.CRAWLER,
             LogCategory.SERVICE,
             LogCategory.INFRA,
         ):
@@ -182,8 +190,8 @@ def setup_logging(log_level: Optional[int] = None):
         3. 静默第三方库的 DEBUG 日志
     """
     if log_level is None:
-        level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-        log_level = getattr(logging, level_name, logging.INFO)
+            level_name = os.getenv("LOG_LEVEL", "WARNING").upper()
+            log_level = getattr(logging, level_name, logging.WARNING)
 
     use_json = os.getenv("LOG_FORMAT", "json").lower() != "txt"
     backup_days = int(os.getenv("LOG_BACKUP_DAYS", "30"))

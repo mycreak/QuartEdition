@@ -237,7 +237,7 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="抓取进度" name="crawl-progress">
+      <el-tab-pane label="电影ID抓取进度" name="crawl-progress">
         <div class="toolbar">
           <el-select v-model="crawlProgressType" placeholder="全部类型" clearable style="width: 160px" @change="onCrawlProgressFilter">
             <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
@@ -334,7 +334,7 @@
         </div>
         <div class="detail-row">
           <span class="detail-key">参数</span>
-          <code class="detail-params">{{ JSON.stringify(histDetail.task_params, null, 2) }}</code>
+          <pre class="detail-params">{{ formatTaskParams(histDetail.task_params) }}</pre>
         </div>
         <template v-if="histDetail.related_failure">
           <el-divider />
@@ -353,6 +353,7 @@
 import { ref, reactive, onMounted, onUnmounted, computed, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { wsManager } from '@/api/ws'
 import { adminTasksApi, adminTaskHistoryApi, type TaskHistory, type TaskHistoryDetail } from '@/api/admin/tasks'
 import { adminQueueApi } from '@/api/admin/monitor'
 import { adminDoubanIdsApi } from '@/api/admin/douban_ids'
@@ -966,6 +967,21 @@ function paramsSummary(row: any) {
   return ''
 }
 
+function formatTaskParams(params: any): string {
+  try {
+    // 如果params是字符串，尝试解析为JSON对象
+    let obj = params
+    if (typeof params === 'string') {
+      obj = JSON.parse(params)
+    }
+    // 格式化输出
+    return JSON.stringify(obj, null, 2)
+  } catch (e) {
+    // 如果解析失败，直接返回原始值
+    return String(params)
+  }
+}
+
 async function showHistDetail(row: TaskHistory) {
   histDetailVisible.value = true
   histDetail.value = null
@@ -975,14 +991,27 @@ async function showHistDetail(row: TaskHistory) {
   } catch { /* ignore */ }
 }
 
-onMounted(() => { fetchQueue(); fetchProgress(); fetchHistory() })
+let unsubTaskStarted: (() => void) | null = null
 
-// 进入页面时自动刷新数据
+onMounted(() => {
+  fetchQueue()
+  fetchProgress()
+  fetchHistory()
+
+  unsubTaskStarted = wsManager.on('task_started', () => {
+    fetchQueue()
+  })
+})
+
 onActivated(() => {
   fetchHistory()
 })
 
-onUnmounted(() => { stopSecondsTimer() })
+onUnmounted(() => {
+  stopSecondsTimer()
+  unsubTaskStarted?.()
+  unsubTaskStarted = null
+})
 </script>
 
 <style scoped>
@@ -1020,4 +1049,7 @@ onUnmounted(() => { stopSecondsTimer() })
 .c-gray { color: #909399; font-size: 12px; }
 .region-tag { margin-left: 4px; }
 .state-tag { margin-left: 4px; }
+.flex.gap-2.items-center,
+.flex.gap-2 { display: flex; gap: 8px; align-items: center; }
+
 </style>

@@ -310,6 +310,8 @@ MIGRATIONS = [
     "ALTER TABLE task_history ADD COLUMN elapsed_ms INT DEFAULT NULL COMMENT '执行耗时（毫秒）' AFTER message",
     # task_failures 新增：failure_layer
     "ALTER TABLE task_failures ADD COLUMN failure_layer VARCHAR(16) NOT NULL DEFAULT 'crawler' COMMENT 'crawler | storage | ai | system' AFTER kind",
+    # task_failures 新增：snapshot（v2 归一化迁移，旧表可能缺失）
+    "ALTER TABLE task_failures ADD COLUMN snapshot JSON DEFAULT NULL COMMENT '执行现场快照' AFTER item_title",
 ]
 
 PERMISSION_CODES = [
