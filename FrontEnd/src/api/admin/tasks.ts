@@ -9,12 +9,15 @@ export const adminTasksApi = {
 }
 
 export interface TaskHistory {
-  id: number
+  id: string
   admin_id: number
   task_type: string
+  task_category?: 'api' | 'browser'
+  parent_task_id?: string | null
   task_params: Record<string, unknown>
   status: 'submitted' | 'running' | 'done' | 'failed'
   message?: string | null
+  elapsed_ms?: number | null
   created_at: string
   updated_at: string
 }
@@ -35,5 +38,5 @@ export const adminTaskHistoryApi = {
   }) =>
     client.get<{ items: TaskHistory[]; total: number; page: number; page_size: number }>('/admin/task-history', { params }),
 
-  detail: (id: number) => client.get<TaskHistoryDetail>(`/admin/task-history/${id}`),
+  detail: (id: string) => client.get<TaskHistoryDetail>(`/admin/task-history/${id}`),
 }

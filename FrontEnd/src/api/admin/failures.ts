@@ -12,9 +12,4 @@ export const adminFailuresApi = {
   release: (id: number) => client.post<{ success: boolean; message: string }>(`/admin/failures/${id}/release`),
 
   resolve: (id: number) => client.post<{ success: boolean; message: string }>(`/admin/failures/${id}/resolve`),
-
-  retry: (id: number, payload?: Record<string, unknown>) =>
-    client.post<{ success: boolean; message: string; execute_at?: number; retry_count?: number; remaining_retries?: number }>(
-      `/admin/failures/${id}/retry`, payload || {}
-    ),
 }

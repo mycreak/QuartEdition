@@ -12,9 +12,14 @@
         remote-show-suffix
         :remote-method="searchMovies"
         :loading="movieOptionsLoading"
-        class="movie-filter"
+        class="filter-select"
+        style="width: 280px"
       >
         <el-option v-for="m in movieOptions" :key="m.movie_id" :label="m.title" :value="m.movie_id" />
+      </el-select>
+      <el-select v-model="publishedFilter" placeholder="上下架" clearable class="filter-select" style="width: 130px">
+        <el-option label="已上架" value="published" />
+        <el-option label="已下架" value="unpublished" />
       </el-select>
     </div>
 
@@ -93,6 +98,7 @@ const activeTab = ref(queryTab && ['reviews', 'comments'].includes(queryTab) ? q
 
 // 电影下拉筛选
 const movieIdFilter = ref<number | undefined>(queryMovieId)
+const publishedFilter = ref<string | undefined>()
 const movieOptions = ref<{ movie_id: number; title: string }[]>([])
 const movieOptionsLoading = ref(false)
 let movieSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -126,8 +132,8 @@ function searchMovies(query: string) {
   movieSearchTimer = setTimeout(() => fetchMovieOptions(query.trim()), 300)
 }
 
-// 监听电影筛选变化，刷新评论列表
-watch(movieIdFilter, () => {
+// 监听筛选变化，刷新评论列表
+watch([movieIdFilter, publishedFilter], () => {
   fetchReviews(1)
   fetchComments(1)
 })
@@ -137,6 +143,7 @@ async function fetchReviews(p = 1) {
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
     if (movieIdFilter.value) params.movie_id = movieIdFilter.value
+    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
     const res = await adminReviewsApi.reviews(params as any)
     reviews.value = res.data.items
     revTotal.value = res.data.total
@@ -149,6 +156,7 @@ async function fetchComments(p = 1) {
   try {
     const params: Record<string, unknown> = { page: p, page_size: 15 }
     if (movieIdFilter.value) params.movie_id = movieIdFilter.value
+    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
     const res = await adminReviewsApi.comments(params as any)
     comments.value = res.data.items
     comTotal.value = res.data.total

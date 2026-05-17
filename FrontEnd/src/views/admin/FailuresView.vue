@@ -32,7 +32,6 @@
           <el-button v-if="row.status === 'pending'" size="small" type="primary" link @click="claim(row)">认领</el-button>
           <el-button v-if="row.status === 'claimed'" size="small" type="warning" link @click="release(row)">释放</el-button>
           <el-button v-if="row.status === 'claimed'" size="small" type="success" link @click="resolve(row)">解决</el-button>
-          <el-button v-if="row.status === 'claimed'" size="small" type="primary" link @click="retry(row)">重爬</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -115,16 +114,6 @@ async function resolve(row: TaskFailure) {
     ElMessage.success('已标记为已解决')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
-  }
-}
-
-async function retry(row: TaskFailure) {
-  try {
-    const res = await adminFailuresApi.retry(row.id)
-    ElMessage.success(`重爬已提交 (剩余重试: ${res.data.remaining_retries ?? 'N/A'})`)
-    row.status = 'pending'
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.error || '重爬失败')
   }
 }
 

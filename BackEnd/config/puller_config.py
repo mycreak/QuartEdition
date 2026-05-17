@@ -29,8 +29,8 @@ class PullerConfig(BaseSettings):
         task_cooldown_seconds: 相邻任务最小间隔（默认 2.0s）
 
     Worker 执行后休息（反爬核心）：
-        worker_rest_min: 每任务执行完后最少休息（默认 120s）
-        worker_rest_max: 每任务执行完后最多休息（默认 300s）
+        worker_rest_min: 每任务执行完后最少休息（默认 150s）
+        worker_rest_max: 每任务执行完后最多休息（默认 250s）
         5 Worker 各自独立休息，自然错峰——休息期间不持任务、不计 busy
     """
 
@@ -51,8 +51,8 @@ class PullerConfig(BaseSettings):
     batch_size: int = 10
 
     task_cooldown_seconds: float = 2.0
-    worker_rest_min: float = 120.0
-    worker_rest_max: float = 300.0
+    worker_rest_min: float = 150.0
+    worker_rest_max: float = 250.0
 
 
 # 全局配置单例 — 自动读 .env 中 PULLER_* 变量

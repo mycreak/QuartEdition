@@ -64,7 +64,7 @@
                     readonly
                     style="flex: 1"
                   />
-                  <el-button type="primary" @click="movieSelectorVisible = true">
+                  <el-button type="primary" @click="openMovieSelector('review_body')">
                     选择电影
                   </el-button>
                 </div>
@@ -80,29 +80,6 @@
                       <el-checkbox v-model="toggleAllCheck" @change="toggleAllReviews">
                         全选当前页
                       </el-checkbox>
-                    </div>
-                    <!-- 筛选栏 -->
-                    <div class="flex gap-2 items-center flex-wrap">
-                      <el-input
-                        v-model="reviewFilters.keyword"
-                        placeholder="搜索评论标题"
-                        clearable
-                        style="width: 200px"
-                        @keyup.enter="fetchPendingReviews(1)"
-                        @clear="fetchPendingReviews(1)"
-                      />
-                      <el-date-picker
-                        v-model="reviewFilters.dateRange"
-                        type="daterange"
-                        range-separator="至"
-                        start-placeholder="开始日期"
-                        end-placeholder="结束日期"
-                        format="YYYY-MM-DD"
-                        value-format="YYYY-MM-DD"
-                        style="width: 300px"
-                        @change="fetchPendingReviews(1)"
-                      />
-                      <el-button @click="resetReviewFilters">重置筛选</el-button>
                     </div>
                   </template>
                   
@@ -373,7 +350,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { adminTasksApi, adminTaskHistoryApi, type TaskHistory, type TaskHistoryDetail } from '@/api/admin/tasks'
@@ -814,6 +791,32 @@ const toggleAllCheck = computed({
   set: () => {}
 })
 
+// 重置任务提交表单
+function resetTaskForm() {
+  // 重置核心表单字段
+  taskForm.type = ''
+  taskForm.type_num = 11
+  taskForm.interval_id = '100:90'
+  taskForm.douban_id = ''
+  taskForm.pages = 2
+  taskForm.scrape_douban_id = ''
+  taskForm.scrape_cookie_id = ''
+  taskForm.scrape_proxy_key = ''
+  taskForm.review_cookie_id = ''
+  taskForm.review_proxy_key = ''
+  taskForm.comment_cookie_id = ''
+  taskForm.comment_proxy_key = ''
+  taskForm.selected_movie_id = null
+  // 重置选中的电影名称
+  selectedMovieTitle.value = ''
+  // 清空待爬长评相关数据
+  pendingReviews.value = []
+  pendingReviewsTotal.value = 0
+  selectedReviewIds.value = []
+  // 重置筛选参数
+  resetReviewFilters()
+}
+
 async function submitTask() {
   if (taskForm.type === 'review_body_crawl' && selectedReviewIds.value.length > 0) {
     // 批量提交模式
@@ -927,10 +930,12 @@ async function submitBatchReviewBodyTasks() {
     ElMessage.error(e?.response?.data?.error || '批量提交失败')
   } finally {
     submitting.value = false
+    // 提交成功后重置表单
+    resetTaskForm()
   }
 }
 
-function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取', director_crawl: '参演职员爬取' }; return m[t] || t }
+function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取', director_crawl: '参演职员爬取', ai_wordcloud: 'AI词云生成' }; return m[t] || t }
 function statusLabel(s: string) { const m: Record<string, string> = { submitted: '已提交', running: '执行中', done: '已完成', failed: '失败' }; return m[s] || s }
 function statusColor(s: string) { const m: Record<string, string> = { submitted: 'info', running: 'warning', done: 'success', failed: 'danger' }; return m[s] || 'info' }
 function paramsSummary(row: any) {
@@ -971,6 +976,11 @@ async function showHistDetail(row: TaskHistory) {
 }
 
 onMounted(() => { fetchQueue(); fetchProgress(); fetchHistory() })
+
+// 进入页面时自动刷新数据
+onActivated(() => {
+  fetchHistory()
+})
 
 onUnmounted(() => { stopSecondsTimer() })
 </script>

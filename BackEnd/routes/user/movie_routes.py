@@ -126,7 +126,7 @@ async def get_comment_wordcloud(movie_id: int):
     # 2. 取短评文本
     try:
         review_svc = _get_review_service()
-        comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=200)
+        comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=100)
     except Exception as e:
         logger.error("获取短评文本失败 movie_id=%s: %s", movie_id, e)
         return jsonify({"success": False, "error": "获取短评数据失败，请稍后重试"}), 500
@@ -140,6 +140,11 @@ async def get_comment_wordcloud(movie_id: int):
     words = await ai_client.generate_comment_wordcloud(comments)
 
     if not words:
+        sn = getattr(ai_client, 'last_snapshot', {}) or {}
+        logger.error(
+            "词云生成失败 movie_id=%s provider=%s last_status=%s attempts=%s",
+            movie_id, sn.get('provider'), sn.get('last_status'), sn.get('attempts'),
+        )
         return jsonify({"success": False, "error": "词云生成失败，请稍后重试"}), 500
 
     # 4. 写缓存 + 返回（缓存写入失败不影响主流程）

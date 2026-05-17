@@ -31,6 +31,7 @@ crawler/__init__.py
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Optional
 
@@ -56,47 +57,6 @@ REVIEW_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/reviews"
 COMMENT_LIST_BASE = "https://movie.douban.com/subject/{douban_id}/comments"
 SUBJECT_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/"
 
-async def _trigger_wordcloud_generation(movie_id: int) -> None:
-    """
-    后台异步生成短评词云缓存。
-
-    调用链：comment_crawl 完成 → asyncio.create_task(本函数)
-    不阻塞主流程，失败静默。
-
-    输入：movie_id 本地电影 ID
-    副作用：MongoDB 查询 + DeepSeek API 调用 + Redis 写入
-    """
-    try:
-        from services.review_service import _get_review_service
-        from utils.ai_client import get_ai_client
-        from db.redis import redis_set
-
-        review_svc = _get_review_service()
-        comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=200)
-        if len(comments) < 10:
-            logger.debug(f"[wordcloud] movie_id={movie_id} 短评不足 10 条，跳过词云生成")
-            return
-
-        ai_client = get_ai_client()
-        words = await ai_client.generate_comment_wordcloud(comments)
-        if not words:
-            logger.warning(f"[wordcloud] movie_id={movie_id} AI 生成失败")
-            return
-
-        import json
-        from datetime import datetime, timezone
-        data = {
-            "words": words,
-            "total_words": len(words),
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        await redis_set(
-            f"wordcloud:movie:{movie_id}",
-            json.dumps(data, ensure_ascii=False),
-        )
-        logger.info(f"[wordcloud] movie_id={movie_id} 词云已生成: {len(words)} 个关键词")
-    except Exception as e:
-        logger.warning(f"[wordcloud] movie_id={movie_id} 后台生成失败（不影响主流程）: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -196,6 +156,8 @@ class CrawlerEngine:
             await self._handle_director_crawl(data)
         elif task_type == "ai_review_summary":
             await self._handle_ai_review_summary(data)
+        elif task_type == "ai_wordcloud":
+            await self._handle_ai_wordcloud(data)
         else:
             raise NotImplementedError(f"未知任务类型: {task_type}")
 
@@ -375,7 +337,7 @@ class CrawlerEngine:
         task_id = data.get("id")
 
         logger.info(
-            f"[movie_scrape] task={task_id} douban_id={douban_id} "
+            f"[电影详情爬取] task={task_id} douban_id={douban_id} "
             f"title='{title}' cookie={cookie_id or '游客'} proxy={proxy_key or '直连'}"
         )
 
@@ -391,18 +353,27 @@ class CrawlerEngine:
             identity = await self._identity_manager.resolve(cookie_id, proxy_key)
         await self._emit_stage(task_str, f"✅ 身份就绪: cookie={cookie_id or '游客'} proxy={proxy_key or '直连'}")
 
-        # ② 爬详情页（最多 3 次重试）
+        # ② 爬详情页（最多 2 次重试，间隔 120s~250s 随机）
         detail_url = SUBJECT_PAGE_BASE.format(douban_id=douban_id)
         html = ""
-        for attempt in range(3):
+        max_attempts = 2
+        for attempt in range(max_attempts):
             await self._emit_stage(task_str, f"📡 正在请求详情页 (第{attempt+1}次): {detail_url}")
             html, ok, snapshot = await self._browser.fetch_page(detail_url, identity)
             if ok:
                 await self._emit_stage(task_str, f"✅ 详情页获取成功")
                 break
-            logger.debug(f"[movie_scrape] task={task_id} 详情页 attempt={attempt+1} 失败: {snapshot.get('error')}")
+            logger.debug(f"[电影详情爬取] task={task_id} 详情页 attempt={attempt+1} 失败: {snapshot.get('error')}")
+            if attempt < max_attempts - 1:
+                delay = random.randint(120, 250)
+                logger.info(
+                    f"[电影详情爬取] task={task_id} 详情页第{attempt+1}次失败，"
+                    f"等待 %ss 后重试第{attempt+2}次", delay,
+                )
+                await self._emit_stage(task_str, f"⏳ 详情页请求失败，{delay}s后重试...")
+                await asyncio.sleep(delay)
         else:
-            raise FetcherError(f"详情页 3 次重试全失败: douban_id={douban_id}")
+            raise FetcherError(f"详情页 {max_attempts} 次重试全失败: douban_id={douban_id}")
 
         await self._emit_stage(task_str, "📝 正在解析电影详情...")
         detail = parse_movie_detail(html)
@@ -439,7 +410,7 @@ class CrawlerEngine:
         title = data.get("title", "")
         task_id = data.get("id")
 
-        logger.info(f"[movie_detail] task={task_id} douban_id={douban_id} title='{title}'")
+        logger.info(f"[电影详情补爬] task={task_id} douban_id={douban_id} title='{title}'")
 
         CELEB_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/celebrities"
 
@@ -453,16 +424,16 @@ class CrawlerEngine:
             celeb_html = await self._browser.fetch(celeb_url)
             detail["crew"] = parse_personnel(celeb_html)
         except Exception as e:
-            logger.error(f"[movie_detail] task={task_id} douban_id={douban_id} 参演人员获取失败: {e}")
+            logger.error(f"[电影详情补爬] task={task_id} douban_id={douban_id} 参演人员获取失败: {e}")
             detail["crew"] = []
 
         if self._movie_service is None:
-            logger.warning(f"[movie_detail] task={task_id} MovieService 未注入，跳过写入")
+            logger.warning(f"[电影详情补爬] task={task_id} MovieService 未注入，跳过写入")
             return
 
         stats = await save_movies(self._movie_service, [detail])
         logger.info(
-            f"[movie_detail] task={task_id} douban_id={douban_id} 完成: "
+            f"[电影详情补爬] task={task_id} douban_id={douban_id} 完成: "
             f"created={stats['created']} skipped={stats['skipped']}"
         )
 
@@ -514,15 +485,16 @@ class CrawlerEngine:
             (movie_id,),
         )
         existing_count = count_result[0].get("cnt", 0) if count_result else 0
-        start = existing_count
+        start = (existing_count // cfg.page_size) * cfg.page_size
         logger.info(
             f"[review_crawl] task={task_id} movie_id={movie_id} 已有 {existing_count} 条, "
-            f"将从 offset={start} 顺延取 {cfg.review_crawl_max_new} 条"
+            f"对齐后 offset={start} 顺延取 {cfg.review_crawl_max_new} 条"
         )
 
-        # 2. 睡眠 45s，反反爬
-        logger.info(f"[review_crawl] 等待 {cfg.review_crawl_pre_sleep}s（反反爬）...")
-        await asyncio.sleep(cfg.review_crawl_pre_sleep)
+        # 2. 随机反爬等待（浏览模拟已内嵌至 fetcher._do_fetch）
+        pre_wait = random.uniform(8, 20)
+        logger.info(f"[review_crawl] 反爬等待 {pre_wait:.0f}s...")
+        await asyncio.sleep(pre_wait)
 
         # 3. 翻页爬取（最多两次翻页：当前页 + 下一页，每页20条中取够5条）
         total_inserted = 0
@@ -731,37 +703,54 @@ class CrawlerEngine:
 
         # 兼容前端统一的 pages 参数，兼容旧字段 comment_pages
         pages = data.get("pages") or data.get("comment_pages") or crawler_config.comment_list_pages
+        logger.info(
+            f"[短评爬取 pages解析] data.pages=%s data.comment_pages=%s config.default=%s → 最终 pages=%s",
+            data.get("pages"), data.get("comment_pages"), crawler_config.comment_list_pages, pages,
+        )
 
         # 查询已采集数量，计算顺延偏移（参照 review_crawl 的顺延模式）
         from services.review_service import _get_review_service
         review_svc = _get_review_service()
         existing_count = await review_svc.count_comments_by_movie_id(movie_id)
-        start_offset = existing_count
-        logger.info(f"[comment_crawl] task={task_id} douban_id={douban_id} movie_id={movie_id} "
-                    f"已有 {existing_count} 条, 将从 offset={start_offset} 顺延取 {pages} 页短评")
+        # 向下取整到 page_size 的整数倍，保证豆瓣分页对齐（58→40, 30→20, 10→0）
+        start_offset = (existing_count // crawler_config.page_size) * crawler_config.page_size
+        logger.info(
+            f"[短评爬取 顺延偏移] MongoDB 已有 %s 条 → 对齐后 start_offset=%s → 将从豆瓣第 %s 条开始 "
+            f"→ 爬 %s 页 × %s 条/页 = 最多 %s 条",
+            existing_count, start_offset, start_offset, pages, crawler_config.page_size,
+            pages * crawler_config.page_size,
+        )
 
         cfg = crawler_config
 
-        # 预等待（反反爬）
-        logger.info(f"[comment_crawl] 等待 {cfg.comment_crawl_pre_sleep}s（反反爬）...")
-        await asyncio.sleep(cfg.comment_crawl_pre_sleep)
+        # 随机反爬等待（浏览模拟已内嵌至 fetcher._do_fetch）
+        pre_wait = random.uniform(3, 10)
+        logger.info(f"[短评爬取 反爬等待] 预等待 {pre_wait:.0f}s")
+        await asyncio.sleep(pre_wait)
 
         all_comments = []
         seen_cids = set()
+        parse_error_count = 0
 
         for page_num in range(pages):
-            # 翻页间等待（第1页也等待，模拟真人打开页面到开始浏览的间隔）
+            # 翻页间随机等待（浏览模拟已内嵌至 fetcher._do_fetch）
             if page_num > 0:
-                logger.info(f"[comment_crawl] 翻页间等待 {cfg.comment_crawl_between_sleep}s...")
-                await asyncio.sleep(cfg.comment_crawl_between_sleep)
+                between_wait = random.uniform(5, 15)
+                logger.info(f"[短评爬取 翻页等待] 第{page_num}/{pages}页前等待 {between_wait:.0f}s")
+                await asyncio.sleep(between_wait)
 
             start = start_offset + page_num * crawler_config.page_size
             page_url = (
                 f"{COMMENT_LIST_BASE.format(douban_id=douban_id)}"
                 f"?start={start}&limit={crawler_config.page_size}&status=P"
             )
+            logger.info(
+                f"[短评爬取 翻页请求] 第%s/%s页 start=%s URL=%s",
+                page_num + 1, pages, start, page_url,
+            )
 
             try:
+                html = ""
                 if identity:
                     html, ok, _ = await self._browser.fetch_page(page_url, identity)
                     if not ok:
@@ -777,11 +766,26 @@ class CrawlerEngine:
                         all_comments.append(c)
                         new_count += 1
                 logger.info(
-                    f"[comment_crawl] task={task_id} 第{page_num+1}/{pages}页: "
-                    f"解析{len(page_comments)}条, 新增{new_count}条"
+                    f"[短评爬取 逐页解析] 第%s/%s页: 豆瓣返回%s条, 去重后新增%s条, 累计%s条",
+                    page_num + 1, pages, len(page_comments), new_count, len(all_comments),
                 )
             except Exception as e:
-                logger.error(f"[comment_crawl] task={task_id} 第{page_num+1}/{pages}页失败: {e}")
+                parse_error_count += 1
+                logger.error(f"[短评爬取 翻页失败] 第%s/%s页异常: %s", page_num + 1, pages, e)
+                # 保存失败页面 HTML 到本地，便于排查（反爬页面 / 结构变更 / 验证页）
+                try:
+                    import os as _os2
+                    dump_dir = _os2.path.join(_os2.path.dirname(_os2.path.dirname(__file__)), "data")
+                    _os2.makedirs(dump_dir, exist_ok=True)
+                    dump_path = _os2.path.join(
+                        dump_dir,
+                        f"comment_fail_m{movie_id}_p{page_num+1}_{int(_time.time())}.html"
+                    )
+                    with open(dump_path, "w", encoding="utf-8") as f:
+                        f.write(html)
+                    logger.info(f"[短评爬取 翻页失败] 已保存问题 HTML: {dump_path}")
+                except Exception as _dump_err:
+                    logger.warning(f"[短评爬取 翻页失败] HTML 保存失败: {_dump_err}")
                 await self._report_item_failure(
                     task_data=data,
                     kind=classify_item_error(e),
@@ -794,22 +798,30 @@ class CrawlerEngine:
         if all_comments:
             saved = await save_comments(douban_id or "", all_comments, movie_id=movie_id)
             logger.info(
-                f"[comment_crawl] task={task_id} 完成: "
-                f"{len(all_comments)}条, 入库{saved}条"
+                f"[短评爬取 入库完成] 解析%s条, MongoDB入库%s条, movie_id=%s",
+                len(all_comments), saved, movie_id,
             )
             if saved > 0 and movie_id:
                 from db.redis import redis_delete
                 await redis_delete(f"wordcloud:movie:{movie_id}")
-                asyncio.create_task(_trigger_wordcloud_generation(movie_id))
-                logger.debug(f"[comment_crawl] 已清除词云缓存并触发后台重新生成: movie_id={movie_id}")
+                # ZADD ai_wordcloud 任务（正式任务，走任务生命周期）
+                await self._inject_ai_wordcloud(movie_id, parent_task_id=task_id)
+                logger.debug(f"[短评爬取 词云触发] 已清除旧缓存并提交 ai_wordcloud 任务: movie_id={movie_id}")
 
             if cookie_id and self._identity_manager is not None:
                 try:
                     await self._identity_manager._cookie_manager.report_success(cookie_id)
                 except Exception:
                     pass
+        elif parse_error_count > 0:
+            # 解析全部失败 → 抛异常，让 Worker 标记任务为 failed
+            raise RuntimeError(
+                f"[短评爬取 任务失败] movie_id={movie_id} "
+                f"{pages} 页全部解析失败（共 {parse_error_count} 次异常），"
+                f"可能页面结构变更或被反爬，HTML 已保存至 data/ 目录"
+            )
         else:
-            logger.warning(f"[comment_crawl] task={task_id} 无可用短评")
+            logger.warning(f"[短评爬取 空结果] movie_id=%s 未获取到任何短评", movie_id)
 
     async def _handle_director_crawl(self, data: dict) -> None:
         """
@@ -903,12 +915,13 @@ class CrawlerEngine:
                 task_type="director_crawl",
                 task_params=sub_task,
                 status="submitted",
+                parent_task_id=parent_task_id,
             )
         except Exception:
             logger.exception("director_crawl 子任务 history 写入失败（不影响主流程）")
 
         logger.info(
-            f"[movie_scrape] 自动创建子任务: director_crawl sub_id={sub_task['id']} "
+            f"[电影详情爬取] 自动创建子任务: director_crawl sub_id={sub_task['id']} "
             f"douban_id={douban_id} movie_id={movie_id} admin_id={admin_id}"
         )
 
@@ -1043,6 +1056,45 @@ class CrawlerEngine:
             except Exception:
                 pass
 
+    async def _inject_ai_wordcloud(self, movie_id: int, parent_task_id: int = 0) -> None:
+        """
+        comment_crawl 完成后自动提交 ai_wordcloud 任务。
+
+        参照 _check_and_trigger_ai_summary 的 ZADD + task_history 模式。
+        """
+        from utils.snowflake import generate_id
+        import json as _json
+        from config.puller_config import puller_config
+
+        wordcloud_task = {
+            "id": generate_id(),
+            "type": "ai_wordcloud",
+            "movie_id": movie_id,
+            "admin_id": 0,
+            "parent_task_id": parent_task_id,
+            "created_at": int(time.time()),
+        }
+        sub_json = _json.dumps(wordcloud_task, ensure_ascii=False)
+
+        await self._movie_service.db.add_delayed_task_with_limit(
+            task_json=sub_json,
+            cooldown_seconds=puller_config.task_cooldown_seconds,
+        )
+
+        try:
+            from services.task_history_service import _get_history_service
+            await _get_history_service().create(
+                task_id=wordcloud_task["id"],
+                admin_id=0,
+                task_type="ai_wordcloud",
+                task_params={"movie_id": movie_id},
+                status="submitted",
+                parent_task_id=parent_task_id,
+            )
+            logger.info("[短评爬取] ai_wordcloud 任务已提交: movie_id=%s parent=%s", movie_id, parent_task_id)
+        except Exception:
+            logger.exception("ai_wordcloud 任务 history 写入失败（不影响主流程）")
+
     async def _check_and_trigger_ai_summary(self, movie_id: int) -> None:
         """
         检查电影已完成长评数量，达到阈值则触发AI总结任务（幂等，同一电影只触发一次）。
@@ -1171,13 +1223,19 @@ class CrawlerEngine:
             
             if not result:
                 # 生成失败，标记为failed
+                sn = getattr(ai_client, 'last_snapshot', {}) or {}
                 await raw.execute_update(
                     "UPDATE review_summary SET status='failed', updated_at=NOW() WHERE movie_id=%s",
                     (movie_id,),
                 )
-                raise RuntimeError(f"AI总结生成失败 movie_id={movie_id}")
-            
-            # 5. 保存结果到数据库
+                raise RuntimeError(
+                    f"AI总结生成失败 movie_id={movie_id} "
+                    f"provider={sn.get('provider', '?')} "
+                    f"last_status={sn.get('last_status', 'N/A')} "
+                    f"attempts={sn.get('attempts', 0)}"
+                )
+
+            # ⑤ 保存结果到数据库
             full_summary = result.get("full_summary", "")
             tags = json.dumps(result.get("tags", []), ensure_ascii=False)
             
@@ -1200,6 +1258,59 @@ class CrawlerEngine:
                 )
             except Exception:
                 pass
+            raise
+
+    # ── AI 词云生成任务 ──
+
+    async def _handle_ai_wordcloud(self, data: dict) -> None:
+        """
+        AI 短评词云生成任务。
+
+        输入：{'movie_id': 电影ID, ...}
+        副作用：MongoDB 查询 → DeepSeek AI 生成 → Redis 缓存
+        """
+        task_id = data.get("id")
+        movie_id = data["movie_id"]
+
+        logger.info(f"[AI词云] 开始处理 task_id=%s movie_id=%s", task_id, movie_id)
+
+        try:
+            from services.review_service import _get_review_service
+            from utils.ai_client import get_ai_client
+            from db.redis import redis_set
+
+            review_svc = _get_review_service()
+            comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=100)
+            if len(comments) < 10:
+                logger.info("[AI词云] movie_id=%s 短评不足 10 条，跳过", movie_id)
+                return
+
+            ai_client = get_ai_client()
+            words = await ai_client.generate_comment_wordcloud(comments)
+            if not words:
+                sn = getattr(ai_client, 'last_snapshot', {}) or {}
+                raise RuntimeError(
+                    f"AI 词云生成失败 movie_id={movie_id} "
+                    f"provider={sn.get('provider', '?')} "
+                    f"last_status={sn.get('last_status', 'N/A')} "
+                    f"attempts={sn.get('attempts', 0)}"
+                )
+
+            import json as _json
+            from datetime import datetime, timezone
+            data_wc = {
+                "words": words,
+                "total_words": len(words),
+                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            await redis_set(
+                f"wordcloud:movie:{movie_id}",
+                _json.dumps(data_wc, ensure_ascii=False),
+            )
+            logger.info("[AI词云] movie_id=%s 完成，%s 个关键词已缓存", movie_id, len(words))
+
+        except Exception as e:
+            logger.error("[AI词云] 失败 task_id=%s movie_id=%s: %s", task_id, movie_id, e)
             raise
 
     # ── 内部：失败上报 ──

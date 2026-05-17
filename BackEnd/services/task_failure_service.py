@@ -8,7 +8,10 @@ services/task_failure_service.py
     2. claim_failure      — 原子认领（WHERE status='pending' 防并发抢）
     3. release_failure    — 放弃认领（status → pending）
     4. resolve_failure    — 标记已解决（status → resolved）
-    5. build_retry_task   — 从失败记录构造重爬任务 JSON
+    5. write_batch_failure — 写入批次级失败事件
+    6. write_item_failure  — 写入 item 级失败事件
+
+注意：不再提供任务级重爬 — 失败后由管理员人工排查，保护 IP 资源。
 
 错误处理：
     所有失败路径抛出 ServiceError 子类，路由层统一捕获。
@@ -25,12 +28,9 @@ from db.database_v2 import DatabaseLayerV2
 from utils.serializers import serialize_datetime_fields
 from utils.errors import (
     ServiceError, NotFoundError, ClaimConflictError, ClaimNotYoursError,
-    RetriesExceededError,
 )
 
 logger = logging.getLogger(__name__)
-
-MAX_RETRY = 2  # 每个失败记录最多允许重试 2 次
 
 
 class TaskFailureService:
@@ -183,13 +183,16 @@ class TaskFailureService:
         reason: str,
         admin_id: int = 0,
         parent_failure_id: int = 0,
+        failure_layer: str = "crawler",
+        snapshot: Optional[dict] = None,
     ) -> int:
         """
         写入批次级失败事件（scope='batch'），同时释放关联的 douban_id 认领。
 
         输入：
             task_id, worker_id, task_json, event_type, kind, reason,
-            admin_id, parent_failure_id
+            admin_id, parent_failure_id,
+            failure_layer: crawler | storage | ai | system（错误来源层）
         输出：自增 ID
 
         副作用：
@@ -199,18 +202,20 @@ class TaskFailureService:
                （is_scraped=-1, admin_id=NULL, acquired_at=NULL）
                释放失败不影响主流程（写日志即可）
         """
+        import json as _json
+        snapshot_json = _json.dumps(snapshot, ensure_ascii=False) if snapshot else None
         sql = (
             "INSERT INTO task_failures "
-            "(task_id, worker_id, task_json, event_type, kind, reason, "
-            "admin_id, status, parent_failure_id, scope) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s, 'batch')"
+            "(task_id, worker_id, task_json, event_type, kind, failure_layer, reason, "
+            "admin_id, status, parent_failure_id, scope, snapshot) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, 'batch', %s)"
         )
         raw = self.db.raw_mysql()
         fid = await raw.execute_insert(sql, (
-            task_id, worker_id, task_json, event_type, kind, reason,
-            admin_id, parent_failure_id,
+            task_id, worker_id, task_json, event_type, kind, failure_layer, reason,
+            admin_id, parent_failure_id, snapshot_json,
         ))
-        logger.info(f"批次失败已记录: id={fid} kind={kind}")
+        logger.info(f"批次失败已记录: id={fid} kind={kind} layer={failure_layer}")
 
         # 释放 douban_id 认领（系统自动清理，失败不影响主流程）
         await self._release_douban_id_on_failure(task_json)
@@ -355,72 +360,6 @@ class TaskFailureService:
             )
 
     # ═══════════════════════════════════════
-    # 重爬
-    # ═══════════════════════════════════════
-
-    async def build_retry_task(self, failure_id: int, admin_id: int) -> str:
-        """
-        从失败记录构造重爬任务 JSON 字符串。
-
-        输入：failure_id, admin_id
-        输出：JSON 字符串
-        异常：
-            NotFoundError        — 记录不存在
-            ClaimNotYoursError   — 不是你认领的
-            RetriesExceededError — 重试次数已超上限（MAX_RETRY=2）
-            ServiceError         — 任务 JSON 解析失败
-        """
-        row = await self.get_failure(failure_id)  # 不存在则抛 NotFoundError
-
-        if row["claimed_by"] != admin_id:
-            raise ClaimNotYoursError("重爬")
-
-        # 检查重试次数上限（兼容旧库 retry_count 列为 NULL → 0）
-        retry_count = row.get("retry_count") or 0
-        if retry_count >= MAX_RETRY:
-            raise RetriesExceededError(failure_id, MAX_RETRY)
-
-        scope = row.get("scope", "batch")
-        item_douban_id = row.get("item_douban_id", "")
-        item_title = row.get("item_title", "")
-
-        if scope == "item" and item_douban_id:
-            task_data = _build_item_retry_task(failure_id, item_douban_id, item_title)
-            return json.dumps(task_data, ensure_ascii=False)
-
-        # scope='batch' → 重新投整个 batch 任务
-        try:
-            task_data = json.loads(row["task_json"])
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ServiceError(f"任务 JSON 解析失败: {e}", "INVALID_TASK_JSON", 500)
-
-        task_data["parent_failure_id"] = failure_id
-        return json.dumps(task_data, ensure_ascii=False)
-
-    # ═══════════════════════════════════════
-    # 重试计数
-    # ═══════════════════════════════════════
-
-    async def increment_retry_count(self, failure_id: int) -> int:
-        """
-        递增失败记录的重试计数（retry_count += 1）。
-
-        输入：failure_id
-        输出：递增后的 retry_count 值
-        副作用：UPDATE task_failures SET retry_count = retry_count + 1
-        兼容：列不存在时 db_test 中用 IFNULL 兜底
-        """
-        raw = self.db.raw_mysql()
-        await raw.execute_update(
-            "UPDATE task_failures SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = %s",
-            (failure_id,)
-        )
-        rows = await raw.execute_query(
-            "SELECT retry_count FROM task_failures WHERE id = %s", (failure_id,)
-        )
-        return (rows[0].get("retry_count") or 0) if rows else 0
-
-    # ═══════════════════════════════════════
     # 内部工具
     # ═══════════════════════════════════════
 
@@ -437,27 +376,6 @@ class TaskFailureService:
         )
 
 
-def _build_item_retry_task(failure_id: int, douban_id: str, title: str) -> Optional[Dict[str, Any]]:
-    """
-    从 item 级失败记录构造 director_crawl 小任务。
-
-    输入：
-        failure_id: 失败记录 ID（用于重爬链路追踪）
-        douban_id:  豆瓣电影 ID
-        title:      电影名（日志用）
-    输出：director_crawl 任务 dict
-    """
-    from utils.snowflake import generate_id
-
-    task_id = generate_id()
-    return {
-        "id": task_id,
-        "type": "director_crawl",
-        "douban_id": douban_id,
-        "movie_id": 0,
-        "parent_failure_id": failure_id,
-        "item_title": title,
-    }
 
 
 # ═══════════════════════════════════════

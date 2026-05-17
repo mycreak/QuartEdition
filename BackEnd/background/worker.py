@@ -298,6 +298,17 @@ class BrowserPool:
                 raise
 
             except Exception as e:
+                # AI 失败时尝试从 ai_client 提取快照
+                snapshot = None
+                try:
+                    tdata = json.loads(task) if task else {}
+                    if tdata.get("type") in ("ai_review_summary", "ai_wordcloud"):
+                        from utils.ai_client import get_ai_client
+                        ai_client = get_ai_client()
+                        snapshot = getattr(ai_client, 'last_snapshot', None)
+                except Exception:
+                    pass
+
                 await self.event_queue.put(
                     WorkerEvent(
                         event_type=EventType.FAILURE,
@@ -306,6 +317,7 @@ class BrowserPool:
                         timestamp=time.time(),
                         kind=classify_exception(e),
                         reason=str(e),
+                        snapshot=snapshot,
                     ).model_dump()
                 )
 

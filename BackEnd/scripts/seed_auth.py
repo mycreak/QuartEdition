@@ -40,19 +40,24 @@ SQLS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     """CREATE TABLE IF NOT EXISTS task_history (
-      id          BIGINT          PRIMARY KEY COMMENT 'snowflake ID',
-      admin_id    INT             NOT NULL COMMENT '提交人 user_id',
-      task_type   VARCHAR(32)     NOT NULL COMMENT 'movie_crawl / review_crawl / comment_crawl / director_crawl',
-      task_params JSON            COMMENT '任务提交时的完整参数',
-      status      VARCHAR(16)     NOT NULL DEFAULT 'submitted'
-                      COMMENT 'submitted / running / done / failed',
-      message     VARCHAR(512)    DEFAULT NULL COMMENT '完成/失败时的描述',
-      created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      id              BIGINT          PRIMARY KEY COMMENT 'snowflake ID',
+      admin_id        INT             NOT NULL COMMENT '提交人 user_id',
+      task_type       VARCHAR(32)     NOT NULL COMMENT 'movie_crawl / review_crawl / comment_crawl / director_crawl / ai_wordcloud',
+      task_category   VARCHAR(16)     NOT NULL DEFAULT 'browser' COMMENT 'api | browser — 两大爬虫路径',
+      parent_task_id  BIGINT          DEFAULT NULL COMMENT '父任务 ID，子任务归属',
+      task_params     JSON            COMMENT '任务提交时的完整参数',
+      status          VARCHAR(16)     NOT NULL DEFAULT 'submitted'
+                        COMMENT 'submitted / running / done / failed',
+      message         VARCHAR(512)    DEFAULT NULL COMMENT '完成/失败时的描述',
+      elapsed_ms      INT             DEFAULT NULL COMMENT '执行耗时（毫秒），done/failed 时填充',
+      created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_admin_id (admin_id),
       INDEX idx_status (status),
+      INDEX idx_category (task_category),
       INDEX idx_task_type (task_type),
       INDEX idx_created_at (created_at),
+      INDEX idx_parent (parent_task_id),
       CONSTRAINT fk_th_admin FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
@@ -60,7 +65,7 @@ SQLS = [
       ('user:manage',          '用户管理',      '创建/禁用/恢复/删除用户，分配权限'),
       ('crawler:task:read',    '任务只读',      '查看爬取进度、任务历史'),
       ('crawler:task:write',   '任务提交',      '提交爬虫任务'),
-      ('crawler:failure:manage','失败管理',      '认领/释放/解决/重试失败任务'),
+      ('crawler:failure:manage','失败管理',      '认领/释放/解决失败任务'),
       ('movie:manage',        '电影管理',      '编辑/上下架 movies/people/credits/genres/regions'),
       ('movie:read',           '查看电影数据',  '只读访问电影详情'),
       ('comment:read',         '评论查看',      '查看长评/短评列表'),
@@ -129,6 +134,7 @@ SQLS = [
       task_json         JSON          NOT NULL,
       event_type        VARCHAR(16)   NOT NULL DEFAULT 'failure' COMMENT 'failure / cancelled',
       kind              VARCHAR(32)   NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation',
+      failure_layer     VARCHAR(16)   NOT NULL DEFAULT 'crawler' COMMENT 'crawler | storage | ai | system — 错误来源层',
       reason            VARCHAR(1024) DEFAULT NULL,
       admin_id          INT           NOT NULL DEFAULT 0,
       status            VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT 'pending / claimed / resolved',
@@ -146,7 +152,8 @@ SQLS = [
       INDEX idx_status (status),
       INDEX idx_claimed_by (claimed_by),
       INDEX idx_task (task_id),
-      INDEX idx_kind (kind)
+      INDEX idx_kind (kind),
+      INDEX idx_layer (failure_layer)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     # movies 表 — 电影主表（爬虫目标）
@@ -295,6 +302,16 @@ SQLS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 ]
 
+# ── v2 归一化迁移：给已有 task_history / task_failures 补充新列 ──
+MIGRATIONS = [
+    # task_history 新增：task_category, parent_task_id, elapsed_ms
+    "ALTER TABLE task_history ADD COLUMN task_category VARCHAR(16) NOT NULL DEFAULT 'browser' COMMENT 'api | browser' AFTER task_type",
+    "ALTER TABLE task_history ADD COLUMN parent_task_id BIGINT DEFAULT NULL COMMENT '父任务 ID' AFTER task_category",
+    "ALTER TABLE task_history ADD COLUMN elapsed_ms INT DEFAULT NULL COMMENT '执行耗时（毫秒）' AFTER message",
+    # task_failures 新增：failure_layer
+    "ALTER TABLE task_failures ADD COLUMN failure_layer VARCHAR(16) NOT NULL DEFAULT 'crawler' COMMENT 'crawler | storage | ai | system' AFTER kind",
+]
+
 PERMISSION_CODES = [
     "user:manage",
     "crawler:task:read",
@@ -324,6 +341,18 @@ async def main():
             for sql in SQLS:
                 await cur.execute(sql)
                 print(f"  [OK] {sql[:70].replace(chr(10),' ')}...")
+
+            # ── 归一化迁移 ──
+            for sql in MIGRATIONS:
+                try:
+                    await cur.execute(sql)
+                    short = sql[:60].replace(chr(10),' ')
+                    print(f"  [MIG] {short}...")
+                except Exception as e:
+                    if "Duplicate column" in str(e) or "already exists" in str(e):
+                        print(f"  [SKIP] 列已存在")
+                    else:
+                        print(f"  [WARN] 迁移失败: {e}")
 
             # 种子超级管理员
             pwd_hash = bcrypt.hashpw(

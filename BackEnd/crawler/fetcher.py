@@ -164,65 +164,22 @@ class BrowserFetcher:
 
     async def fetch(self, url: str) -> str:
         """
-        下载指定 URL 的 HTML。
+        下载指定 URL 的 HTML（v4 简化版：不再内部做代理轮换+直连兜底）。
+
+        代理/Cookie 由上层通过 fetch_page(url, identity) 或 fetch_review_body(url, identity) 精确指定。
+        本方法仅用于游客/无代理场景，单次直连请求。
 
         输入：
             url: 目标页面 URL
         输出：
             HTML 文本字符串
         异常：
-            FetcherError — 代理全失败且直连也失败 / 直连不可用时所有代理都失败
-        副作用：
-            - 浏览器资源：创建/关闭 context 和 page（在 finally 中确保释放）
-            - 代理状态：通过 proxy_pool.report_success/failure 驱动状态机
+            FetcherError — 直连失败
         """
-        if self.proxy_pool is not None:
-            for attempt in range(self.max_retries):
-                proxy = await self.proxy_pool.get_proxy()
-                if proxy is None:
-                    logger.debug(f"代理池已空，第 {attempt + 1} 次尝试后退出代理模式")
-                    break
-
-                html, ok = await self._fetch_via_proxy(url, proxy)
-                if ok:
-                    await self.proxy_pool.report_success(proxy)
-                    return html
-
-                await self.proxy_pool.report_failure(proxy)
-                logger.debug(f"代理失败: {proxy.key}")
-
-            logger.info(f"代理全失败或池空（{self.max_retries} 次），尝试直连兜底")
-
-        if self.direct_fallback or self.proxy_pool is None:
-            try:
-                html, ok = await self._fetch_direct(url)
-                if ok:
-                    return html
-                raise FetcherError(f"直连返回异常: {url}", attempts=0)
-            except FetcherError:
-                raise
-            except Exception as e:
-                raise FetcherError(f"直连失败: {e}", attempts=0) from e
-
-        raise FetcherError(
-            f"所有方式均无法获取: {url}",
-            attempts=self.max_retries,
-        )
-
-    async def _fetch_via_proxy(self, url: str, proxy: Proxy) -> tuple[str, bool]:
-        """
-        通过指定代理获取页面。
-
-        输入：
-            url:   目标 URL
-            proxy: 代理对象（含 host、port）
-        输出：
-            (html, ok) — ok=True 表示页面正常，未被反爬拦截
-        副作用：
-            创建/关闭 browser context 和 page
-        """
-        proxy_config = _build_proxy_config(proxy)
-        return await self._do_fetch(url, proxy_config)
+        html, ok = await self._fetch_direct(url)
+        if ok:
+            return html
+        raise FetcherError(f"直连返回异常: {url}")
 
     async def _fetch_direct(self, url: str) -> tuple[str, bool]:
         """
@@ -348,6 +305,8 @@ class BrowserFetcher:
             if "sec.douban.com" in page.url:
                 await page.wait_for_timeout(3000)
 
+            await self._simulate_human_browsing(page)
+
             html = await page.content()
 
             if not html or len(html) < 200:
@@ -384,6 +343,52 @@ class BrowserFetcher:
                 except Exception:
                     pass
 
+    async def _simulate_human_browsing(self, page) -> None:
+        """
+        模拟人类浏览行为：随机滚动 + 随机等待 + 豆瓣验证按钮点击。
+
+        目的：
+            1. 触发懒加载内容（滚动后新 DOM 被渲染）
+            2. 发出类人行为信号，降低反爬检测风险
+            3. 自动点击豆瓣验证按钮 #sub
+
+        调用时机：_do_fetch 内部，networkidle + SHA-512 等待之后，page.content() 之前。
+        失败不抛异常，不影响主流程。
+        """
+        try:
+            # 1. 随机初始等待（模拟打开页面后阅读 1~3 秒）
+            await page.wait_for_timeout(int(random.uniform(1.0, 3.0) * 1000))
+
+            # 2. 检测并点击豆瓣验证按钮（如果出现）
+            try:
+                btn = page.locator("#sub")
+                if await btn.is_visible(timeout=2000):
+                    await btn.click(timeout=3000)
+                    await page.wait_for_timeout(int(random.uniform(2.0, 5.0) * 1000))
+            except Exception:
+                pass
+
+            # 3. 向下滚动到底部（smooth 行为更像真人）
+            await page.evaluate(
+                "window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})"
+            )
+            await page.wait_for_timeout(int(random.uniform(1.5, 3.0) * 1000))
+
+            # 4. 向上回滚一段（模拟回看）
+            await page.evaluate(f"window.scrollBy(0, -{random.randint(400, 900)})")
+            await page.wait_for_timeout(int(random.uniform(0.8, 1.8) * 1000))
+
+            # 5. 再向上回滚一段
+            await page.evaluate(f"window.scrollBy(0, -{random.randint(200, 600)})")
+            await page.wait_for_timeout(int(random.uniform(0.5, 1.5) * 1000))
+
+            # 6. 向下滚回中间位置（停在页面中间而非底部）
+            await page.evaluate(f"window.scrollBy(0, {random.randint(200, 500)})")
+            await page.wait_for_timeout(int(random.uniform(0.5, 1.0) * 1000))
+
+        except Exception:
+            pass
+
     async def fetch_review_body(self, url: str, identity=None) -> str:
         """
         专用于长评详情页的获取（v3 增强版）。
@@ -417,43 +422,12 @@ class BrowserFetcher:
                 storage_state=identity.storage_state or None, cfg=cfg,
             )
 
-        if self.proxy_pool is not None:
-            proxy = await self.proxy_pool.get_proxy()
-            if proxy is not None:
-                return await self._fetch_review_body_with_proxy(url, proxy, cfg)
-
+        # 无 identity → 单次直连（v4 简化：不再内部做代理轮换+直连兜底）
         return await self._fetch_review_body_direct(url, cfg)
 
     async def _fetch_review_body_direct(self, url: str, cfg) -> str:
         """直连获取长评（代理池为空或代理全部不可用时）。"""
         return await self._do_fetch_review_body(url, proxy_config=None, cfg=cfg)
-
-    async def _fetch_review_body_with_proxy(self, url: str, proxy: Proxy, cfg) -> str:
-        """通过指定代理获取长评，失败则切换或直连。"""
-        proxy_config = _build_proxy_config(proxy)
-        try:
-            html = await self._do_fetch_review_body(url, proxy_config=proxy_config, cfg=cfg)
-            await self.proxy_pool.report_success(proxy)
-            return html
-        except FetcherError:
-            await self.proxy_pool.report_failure(proxy)
-            for attempt in range(1, self.max_retries):
-                next_proxy = await self.proxy_pool.get_proxy()
-                if next_proxy is None:
-                    break
-                proxy_config = _build_proxy_config(next_proxy)
-                try:
-                    html = await self._do_fetch_review_body(url, proxy_config=proxy_config, cfg=cfg)
-                    await self.proxy_pool.report_success(next_proxy)
-                    return html
-                except FetcherError:
-                    await self.proxy_pool.report_failure(next_proxy)
-            if self.direct_fallback:
-                return await self._fetch_review_body_direct(url, cfg)
-            raise
-        except Exception:
-            await self.proxy_pool.report_failure(proxy)
-            raise
 
     async def _do_fetch_review_body(self, url: str, proxy_config, cfg, storage_state=None) -> str:
 
@@ -616,7 +590,9 @@ class ApiFetcher:
 
     async def fetch(self, url: str) -> Union[dict, list, str]:
         """
-        获取 URL 内容，自动判断 JSON 或 HTML。
+        获取 URL 内容，自动判断 JSON 或 HTML（v4 简化版：单次直连）。
+
+        代理由上层在任务配置阶段指定，本方法不再做内部代理轮换+直连兜底。
 
         输入：
             url: 目标 URL
@@ -624,42 +600,17 @@ class ApiFetcher:
             dict | list — JSON API 响应
             str       — HTML 或其他文本
         异常：
-            FetcherError — 所有方式均失败
+            FetcherError — 请求失败
             json.JSONDecodeError — Content-Type 声明为 JSON 但解析失败
         """
-        if self.proxy_pool is not None:
-            for attempt in range(self.max_retries):
-                proxy = await self.proxy_pool.get_proxy()
-                if proxy is None:
-                    logger.debug(f"代理池已空，第 {attempt + 1} 次尝试后退出代理模式")
-                    break
-
-                try:
-                    result = await self._request(url, proxy)
-                    await self.proxy_pool.report_success(proxy)
-                    return result
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    await self.proxy_pool.report_failure(proxy)
-                    logger.debug(f"代理失败: {proxy.key}")
-
-            logger.info(f"代理全失败或池空（{self.max_retries} 次），尝试直连兜底")
-
-        if self.direct_fallback or self.proxy_pool is None:
-            try:
-                return await self._request(url, proxy=None)
-            except asyncio.CancelledError:
-                raise
-            except FetcherError:
-                raise
-            except Exception as e:
-                raise FetcherError(f"请求失败: {e}", attempts=0) from e
-
-        raise FetcherError(
-            f"所有方式均无法获取: {url}",
-            attempts=self.max_retries,
-        )
+        try:
+            return await self._request(url, proxy=None)
+        except asyncio.CancelledError:
+            raise
+        except FetcherError:
+            raise
+        except Exception as e:
+            raise FetcherError(f"请求失败: {e}") from e
 
     async def _request(
         self,

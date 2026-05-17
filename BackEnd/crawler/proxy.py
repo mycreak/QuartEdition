@@ -6,17 +6,16 @@ IP 代理池全生命周期管理。
 职责：
     1. 维护代理状态机：UNKNOWN → ALIVE ↔ SUSPICIOUS → BANNED
     2. 线程安全的代理获取（asyncio.Lock）
-    3. 管理员添加的代理持久化到 data/proxies.json
+    3. 管理员/付费代理持久化到 data/proxies.json
     4. 单代理校验（alive check）
     5. 批量 health_check
 
 不负责：
-    1. 从免费网站爬取代理（由 proxy_fetcher.py 负责）
-    2. HTTP 请求封装（由 fetcher.py 负责）
+    HTTP 请求封装（由 fetcher.py 负责）
 
 设计要点：
-    - 免费代理（AUTO）不持久化，TTL 短
-    - 管理员添加（ADMIN）持久化，TTL 长
+    - 付费代理通过 .env PAID_PROXIES 注入，TTL 7 天
+    - 管理员手动添加的代理持久化，TTL 7 天
     - _banned 不持久化——封了就封了
 """
 
@@ -43,8 +42,7 @@ class ProxyStatus(Enum):
 
 
 class SourceType(Enum):
-    AUTO = "auto"     # 免费代理站爬取，不持久化
-    ADMIN = "admin"   # 管理员手动添加，持久化
+    ADMIN = "admin"   # 管理员手动添加或 .env 付费代理注入
 
 
 @dataclass
@@ -67,7 +65,7 @@ class Proxy:
         success_count:    累计成功次数
         last_used:        上次使用时间戳
         added_at:         加入时间戳
-        source:           来源类型（AUTO/ADMIN）
+        source:           来源类型（ADMIN）
         region:           地区（可选）
     """
     host: str
@@ -83,7 +81,7 @@ class Proxy:
     success_count: int = 0
     last_used: float = 0.0
     added_at: float = field(default_factory=time.time)
-    source: SourceType = SourceType.AUTO
+    source: SourceType = SourceType.ADMIN
     region: str = ""
 
     @property
@@ -104,8 +102,7 @@ FAIL_THRESHOLD_BAN = 2       # 连续失败 N 次 → BANNED
 SUSPICIOUS_RESET_ON_SUCCESS = True  # 可疑代理成功一次 → 恢复 ALIVE
 
 # TTL 配置（秒）
-AUTO_TTL = 1800              # 免费代理默认 30 分钟
-ADMIN_TTL = 604800           # 管理员代理默认 7 天
+ADMIN_TTL = 604800           # 管理员/付费代理默认 7 天
 
 _proxy_id_counter: int = 0
 
@@ -157,7 +154,7 @@ class ProxyPool:
 
     async def load_persisted(self) -> int:
         """
-        从 data/proxies.json 加载管理员添加的代理。
+        从 data/proxies.json 加载持久化的代理（管理员手动添加的）。
 
         输入：无
         输出：加载成功数

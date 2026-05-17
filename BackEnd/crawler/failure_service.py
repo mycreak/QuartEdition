@@ -34,6 +34,7 @@ crawler/failure_service.py
 """
 
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -58,7 +59,6 @@ class FailureKind(str, Enum):
     用途：
         - Monitor 写入 task_failures.kind 列
         - 统计错误分布，辅助优化代理/解析/容错策略
-        - 后续重试策略：network/timeout 可重试，validation/parse 不可重试
     """
     NETWORK     = "network"       # DNS/代理/连接被拒/直连失败
     TIMEOUT     = "timeout"       # Playwright 导航超时 / aiohttp 读取超时
@@ -80,7 +80,6 @@ class WorkerEvent(BaseModel):
     约束：
         - 所有字段必填（Pydantic 默认行为）
         - kind 和 reason 在 SUCCESS 时可为默认值
-        - retry_count / max_retries 当前预留为 0，后续由重试中间件填充
     """
     event_type:  EventType
     worker_id:   int
@@ -94,7 +93,10 @@ class WorkerEvent(BaseModel):
     # 仅在 STAGE_CHANGE 时有意义 — Crawler 内部阶段描述
     stage:   str = ""
 
-    # 重试帧（预留 — 当前全部为 0）
+    # 执行快照 — AI 失败时包含 {provider, model, input_preview, output_preview, ...}
+    snapshot: Optional[dict] = None
+
+    # 预留 — 当前全部为 0
     retry_count: int = 0
     max_retries: int = 0
 
@@ -165,3 +167,31 @@ def classify_exception(exc: Exception) -> FailureKind:
         return FailureKind.PARSE
 
     return FailureKind.UNKNOWN
+
+
+def classify_failure_layer(kind: FailureKind, exc: Exception) -> str:
+    """
+    根据 FailureKind + 异常信息推导 failure_layer（错误来源层）。
+
+    输入：FailureKind 枚举 + 原始异常
+    输出："crawler" | "storage" | "ai" | "system"
+
+    分类策略：
+        - STORAGE → "storage"（MySQL/MongoDB 写入失败）
+        - ABUSE / NETWORK / PARSE / VALIDATION / HTTP → "crawler"
+        - BROWSER → "system"（浏览器崩溃，已自带重启）
+        - 异常类名含 "AI" 或 "DeepSeek" → "ai"
+        - 其他 → "crawler"
+    """
+    if kind == FailureKind.STORAGE:
+        return "storage"
+
+    if kind == FailureKind.BROWSER:
+        return "system"
+
+    exc_name = type(exc).__name__
+    msg = str(exc).lower()
+    if any(kw in exc_name.lower() or kw in msg for kw in ("deepseek", "openai", "ai", "token")):
+        return "ai"
+
+    return "crawler"

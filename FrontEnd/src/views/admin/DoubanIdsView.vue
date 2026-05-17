@@ -215,6 +215,8 @@ async function release(row: DoubanId) {
   try {
     await adminDoubanIdsApi.release(row.douban_id)
     row.is_acquired = 0
+    row.claimed_by_name = ''
+    row.admin_id = null
     ElMessage.success(`已释放 ${row.douban_id}`)
   } catch (e: any) {
     if (e?.response?.status === 409) {

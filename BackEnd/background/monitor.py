@@ -250,6 +250,18 @@ class Monitor:
 
         try:
             from services.task_failure_service import _get_failure_service
+            # 从 failure_service 导入 classify_failure_layer
+            from crawler.failure_service import FailureKind, classify_failure_layer
+            # 用事件中的 kind 字符串构造 FailureKind，推导 failure_layer
+            try:
+                kind_enum = FailureKind(event.kind.value)
+                # 这里没有异常对象，降级用 kind 推导
+                layer = "storage" if kind_enum == FailureKind.STORAGE else (
+                    "system" if kind_enum == FailureKind.BROWSER else "crawler"
+                )
+            except ValueError:
+                layer = "crawler"
+
             svc = _get_failure_service()
             await svc.write_batch_failure(
                 task_id=task_id,
@@ -260,6 +272,8 @@ class Monitor:
                 reason=event.reason,
                 admin_id=admin_id,
                 parent_failure_id=parent_failure_id,
+                failure_layer=layer,
+                snapshot=event.snapshot,
             )
         except Exception:
             logger.exception("写入失败事件到 MySQL 失败")
@@ -273,10 +287,20 @@ class Monitor:
             except (json.JSONDecodeError, TypeError):
                 pass
             if task_type not in ("movie_detail_crawl", "review_full_crawl"):
+                elapsed_ms = None
+                if event.task:
+                    try:
+                        tdata = json.loads(event.task)
+                        created = tdata.get("created_at", 0)
+                        if created:
+                            elapsed_ms = int((event.timestamp - created) * 1000)
+                    except Exception:
+                        pass
                 await _get_history_service().update_status(
                     task_id=task_id,
                     status="failed",
                     message=event.reason,
+                    elapsed_ms=elapsed_ms,
                 )
         except Exception:
             pass
@@ -298,7 +322,7 @@ class Monitor:
         parts = []
         for key, value in report.items():
             parts.append(f"{key}={value}")
-        logger.info(f"Monitor 报告 | {' | '.join(parts)}")
+        logger.debug(f"Monitor 报告 | {' | '.join(parts)}")
 
     @staticmethod
     def _extract_task_meta(task_str: str) -> tuple:
@@ -376,12 +400,21 @@ class Monitor:
 
         if task_type not in ("movie_detail_crawl", "review_full_crawl"):
             try:
-                # TODO: 硬编码排除列表 — 应改为 monitor_config.success_excluded_types 配置驱动
                 from services.task_history_service import _get_history_service
+                elapsed_ms = None
+                if event.task:
+                    try:
+                        tdata = json.loads(event.task)
+                        created = tdata.get("created_at", 0)
+                        if created:
+                            elapsed_ms = int((event.timestamp - created) * 1000)
+                    except Exception:
+                        pass
                 await _get_history_service().update_status(
                     task_id=task_id,
                     status="done",
                     message=f"已完成: {task_type}" if task_type else "已完成",
+                    elapsed_ms=elapsed_ms,
                 )
             except Exception:
                 pass

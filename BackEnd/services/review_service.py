@@ -223,12 +223,12 @@ class ReviewService:
     async def get_comments_text_by_movie_id(
         self,
         movie_id: int,
-        limit: int = 200,
+        limit: int = 100,
     ) -> List[str]:
         """
         获取指定电影已上架短评的纯文本列表，供 AI 词云分析使用。
 
-        输入：movie_id: 本地电影ID, limit: 最多取多少条
+        输入：movie_id: 本地电影ID, limit: 最多取多少条（≤100，受 MongoDB 分页校验限制）
         输出：短评纯文本字符串列表
         副作用：无异常抛出 — 集合不存在/无数据/连接失败均返回空列表
         """
@@ -300,10 +300,14 @@ class ReviewService:
                 page=1,
                 page_size=1,
             )
+            logger.info(
+                "[短评爬取 MongoDB计数] movie_id=%s is_published=True → total=%s",
+                movie_id, total,
+            )
             return total
         except Exception as e:
             logger.warning(
-                "统计短评数量异常 movie_id=%s: %s，返回 0 降级处理",
+                "[短评爬取 MongoDB计数] 统计异常 movie_id=%s: %s，返回 0 降级处理",
                 movie_id, e,
             )
             return 0

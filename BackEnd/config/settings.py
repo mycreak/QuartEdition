@@ -51,9 +51,13 @@ class Settings(BaseSettings):
         description="Snowflake 机器编号（0~1023），多实例部署时通过 .env 覆盖",
     )
 
-    # ── DeepSeek大模型 ──
-    DEEPSEEK_API_KEY: str = ""  # DeepSeek API密钥，通过.env设置
-    DEEPSEEK_ENDPOINT: str = "https://api.deepseek.com/v1/chat/completions"  # DeepSeek官方API接入点
+    # ── AI 大模型 ──
+    AI_PROVIDER: str = "deepseek"  # deepseek | doubao — 选择 AI 服务商
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_ENDPOINT: str = "https://api.deepseek.com/v1/chat/completions"
+    DOUBAO_API_KEY: str = ""
+    DOUBAO_ENDPOINT: str = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    DOUBAO_MODEL: str = "doubao-lite-32k"
 
     # ── MySQL ──
     MYSQL_HOST: str = "localhost"

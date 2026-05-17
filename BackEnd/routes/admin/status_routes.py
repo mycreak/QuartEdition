@@ -242,6 +242,9 @@ def _summarize_task(task_str: str) -> dict:
         # 兼容两种字段：短评任务提交用的是douban_id
         movie_identifier = data.get('movie_id') or data.get('douban_id') or '未知'
         summary["label"] = f"爬取短评: movie={movie_identifier}"
+    elif t == "ai_wordcloud":
+        summary["movie_id"] = data.get("movie_id")
+        summary["label"] = f"生成词云: movie_id={data.get('movie_id', '?')}"
     else:
         summary["label"] = t
     return summary

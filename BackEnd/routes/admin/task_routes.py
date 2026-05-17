@@ -32,7 +32,7 @@ async def submit_task():
 
     task_type = body.get("type", "").strip()
     if task_type not in ("movie_crawl", "review_crawl", "review_body_crawl",
-                         "comment_crawl", "movie_scrape_task", "director_crawl"):
+                         "comment_crawl", "movie_scrape_task", "director_crawl", "ai_wordcloud"):
         return jsonify({"error": f"不支持的任务类型: {task_type}"}), 400
 
     from utils.snowflake import generate_id
@@ -130,6 +130,12 @@ async def submit_task():
             pages = body.get("pages") or body.get("comment_pages")
             if pages is not None:
                 task_data["comment_pages"] = pages  # 爬虫内统一用 comment_pages
+            logger.info(
+                f"[短评爬取 提交阶段] 入参 pages=%s comment_pages=%s cookie_id=%s proxy_key=%s "
+                f"→ task_data comment_pages=%s",
+                body.get("pages"), body.get("comment_pages"), cookie_id, proxy_key,
+                task_data.get("comment_pages"),
+            )
 
     elif task_type == "director_crawl":
         douban_id = body.get("douban_id", "").strip()

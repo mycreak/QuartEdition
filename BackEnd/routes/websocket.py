@@ -69,7 +69,7 @@ def register_websocket_routes(app, ws_manager):
             # 解析 LocalProxy 为真实 WebSocket 对象，避免 Manager 依赖 Werkzeug 私有 API
             resolved_ws = websocket._get_current_object()
             await ws_manager.register(admin_id, resolved_ws)
-            logger.info(f"WebSocket 已连接: admin_id={admin_id}")
+            logger.debug(f"WebSocket 已连接: admin_id={admin_id}")
 
             while True:
                 data = await websocket.receive()

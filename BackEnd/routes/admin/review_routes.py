@@ -40,13 +40,14 @@ def _as_error(e: ServiceError):
 @tag(["评论管理"])
 async def list_reviews():
     movie_id = request.args.get("movie_id", type=int)
+    published = request.args.get("published", type=int)
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 20, type=int)
 
     svc = _get_review_service()
     items, total = await svc.list_reviews(
         movie_id=movie_id,
-        published_only=False,
+        published_only=bool(published) if published is not None else False,
         page=page,
         page_size=page_size,
     )
@@ -59,6 +60,7 @@ async def list_reviews():
 async def list_comments():
     movie_id = request.args.get("movie_id", type=int)
     rating = request.args.get("rating", type=float)
+    published = request.args.get("published", type=int)
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 20, type=int)
 
@@ -66,7 +68,7 @@ async def list_comments():
     items, total = await svc.list_comments(
         movie_id=movie_id,
         rating=rating,
-        published_only=False,
+        published_only=bool(published) if published is not None else False,
         page=page,
         page_size=page_size,
     )
