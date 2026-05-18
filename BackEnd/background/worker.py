@@ -75,6 +75,8 @@ class BrowserPool:
         self._tasks: list[asyncio.Task] = []
         self._busy_counter = 0
         self._busy_since: dict[int, float] = {}
+        self._cooldown_since: dict[int, float] = {}  # worker 开始冷却的时间戳
+        self._cooldown_until: dict[int, float] = {}  # worker 冷却结束的时间戳
         self._worker_crashed_count = 0
         self._worker_current_task: dict[int, str] = {}
         self._shutting_down = False  # shutdown 标志：防止 restart_dead_workers 误复活
@@ -94,8 +96,18 @@ class BrowserPool:
 
     @property
     def idle_count(self) -> int:
-        """当前空闲的 Worker 数量。"""
-        return self._worker_count - self._busy_counter
+        """当前空闲的 Worker 数量（不含冷却中）。"""
+        return self._worker_count - self._busy_counter - self.cooldown_count
+
+    @property
+    def cooldown_count(self) -> int:
+        """当前冷却中的 Worker 数量。"""
+        now = time.time()
+        count = 0
+        for wid, until in self._cooldown_until.items():
+            if now < until:
+                count += 1
+        return count
 
     def get_worker_health(self) -> dict:
         """
@@ -113,8 +125,10 @@ class BrowserPool:
                 "stuck": [dict],           # 疑似卡死的 Worker 详情
                 "crashed_total": int,      # 累计崩溃次数
                 "busy_count": int,         # 当前忙碌数
-                "idle_count": int,         # 当前空闲数
+                "idle_count": int,         # 当前空闲数（不含冷却）
+                "cooldown_count": int,     # 当前冷却数
                 "busy_since": dict,        # 各 Worker 开始忙碌的时间戳
+                "cooldown_info": list[dict], # 各冷却中 Worker 的详情
             }
         副作用：只读，不修改状态
         """
@@ -140,6 +154,14 @@ class BrowserPool:
                     "busy_seconds": round(elapsed, 1),
                 })
 
+        cooldown_info = []
+        for wid, until in self._cooldown_until.items():
+            if now < until:
+                cooldown_info.append({
+                    "worker_id": wid,
+                    "cooldown_remaining": round(until - now, 1),
+                })
+
         return {
             "alive": alive,
             "expected": self._worker_count,
@@ -147,8 +169,10 @@ class BrowserPool:
             "stuck": stuck,
             "crashed_total": self._worker_crashed_count,
             "busy_count": self._busy_counter,
-            "idle_count": self._worker_count - self._busy_counter,
+            "idle_count": self._worker_count - self._busy_counter - self.cooldown_count,
+            "cooldown_count": self.cooldown_count,
             "busy_since": dict(self._busy_since),
+            "cooldown_info": cooldown_info,
         }
 
     async def restart_dead_workers(self) -> int:
@@ -333,10 +357,17 @@ class BrowserPool:
                 puller_config.worker_rest_min,
                 puller_config.worker_rest_max,
             )
+            now = time.time()
+            self._cooldown_since[worker_id] = now
+            self._cooldown_until[worker_id] = now + cooldown
             logger.debug(
                 f"Worker-{worker_id} 任务完成，cooldown={cooldown:.0f}s 后取下一个任务"
             )
-            await asyncio.sleep(cooldown)
+            try:
+                await asyncio.sleep(cooldown)
+            finally:
+                self._cooldown_since.pop(worker_id, None)
+                self._cooldown_until.pop(worker_id, None)
 
 
 # ==================== 虚拟执行器 ====================

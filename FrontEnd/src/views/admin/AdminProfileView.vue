@@ -76,7 +76,7 @@
               @click="$router.push('/admin/users')"
             >
               <el-icon :size="24" style="margin-bottom: 8px"><User /></el-icon>
-              <div>用户管理</div>
+              <div>用户状态管理</div>
             </el-button>
 
             <el-button

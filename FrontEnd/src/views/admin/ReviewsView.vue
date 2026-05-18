@@ -48,13 +48,28 @@
             </template>
           </el-table-column>
           <el-table-column prop="author" label="作者" width="120" />
-          <el-table-column prop="text" label="内容" min-width="320" show-overflow-tooltip />
+          <el-table-column prop="text" label="内容" min-width="320">
+            <template #default="{ row }">
+              <div class="table-content-preview">
+                {{ row.text?.slice(0, 50) }}{{ row.text?.length > 50 ? '...' : '' }}
+              </div>
+              <el-button
+                v-if="row.text?.length > 50"
+                type="primary"
+                link
+                size="small"
+                @click="showReviewDetail(row)"
+              >
+                查看全文
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
               <el-tag :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button v-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleReviewPublish(row)">
                 {{ row.is_published ? '下架' : '上架' }}
@@ -75,13 +90,28 @@
             </template>
           </el-table-column>
           <el-table-column prop="author" label="作者" width="120" />
-          <el-table-column prop="text" label="内容" min-width="320" show-overflow-tooltip />
+          <el-table-column prop="text" label="内容" min-width="320">
+            <template #default="{ row }">
+              <div class="table-content-preview">
+                {{ row.text?.slice(0, 50) }}{{ row.text?.length > 50 ? '...' : '' }}
+              </div>
+              <el-button
+                v-if="row.text?.length > 50"
+                type="primary"
+                link
+                size="small"
+                @click="showCommentDetail(row)"
+              >
+                查看全文
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
               <el-tag :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button v-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleCommentPublish(row)">
                 {{ row.is_published ? '下架' : '上架' }}
@@ -92,6 +122,36 @@
         <el-pagination v-model:current-page="comPage" :total="comTotal" :page-size="15" background layout="total, prev, pager, next" class="paginator" @current-change="fetchComments" />
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 长评详情弹窗 -->
+    <el-dialog
+      v-model="reviewDetailVisible"
+      title="长评详情"
+      width="600px"
+    >
+      <div class="detail-content">
+        <div class="detail-meta">
+          <p><strong>电影：</strong>{{ currentReview?.movie_title || `ID: ${currentReview?.movie_id}` }}</p>
+          <p><strong>作者：</strong>{{ currentReview?.author }}</p>
+        </div>
+        <div class="detail-text" v-html="formatContent(currentReview?.text)"></div>
+      </div>
+    </el-dialog>
+
+    <!-- 短评详情弹窗 -->
+    <el-dialog
+      v-model="commentDetailVisible"
+      title="短评详情"
+      width="600px"
+    >
+      <div class="detail-content">
+        <div class="detail-meta">
+          <p><strong>电影：</strong>{{ currentComment?.movie_title || `ID: ${currentComment?.movie_id}` }}</p>
+          <p><strong>作者：</strong>{{ currentComment?.author }}</p>
+        </div>
+        <div class="detail-text" v-html="formatContent(currentComment?.text)"></div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -146,6 +206,12 @@ const comments = ref<AdminComment[]>([])
 const comPage = ref(1)
 const comTotal = ref(0)
 const comLoading = ref(false)
+
+// 详情弹窗相关
+const reviewDetailVisible = ref(false)
+const commentDetailVisible = ref(false)
+const currentReview = ref<AdminReview | null>(null)
+const currentComment = ref<AdminComment | null>(null)
 
 async function fetchAllRegions() {
   try {
@@ -247,6 +313,21 @@ async function toggleCommentPublish(row: AdminComment) {
   } catch { ElMessage.error('操作失败') }
 }
 
+function formatContent(content: string | undefined): string {
+  if (!content) return ''
+  return content.replace(/\n/g, '<br>')
+}
+
+function showReviewDetail(row: AdminReview) {
+  currentReview.value = row
+  reviewDetailVisible.value = true
+}
+
+function showCommentDetail(row: AdminComment) {
+  currentComment.value = row
+  commentDetailVisible.value = true
+}
+
 onMounted(async () => {
   await fetchAllRegions()
   await fetchMovieOptions()
@@ -262,4 +343,35 @@ onMounted(async () => {
 .filter-select { width: 120px; }
 .year-input { width: 100px; }
 .paginator { margin-top: 16px; justify-content: flex-end; }
+
+.table-content-preview {
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.detail-content {
+  font-size: 14px;
+}
+
+.detail-meta {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.detail-meta p {
+  margin: 8px 0;
+  color: #606266;
+}
+
+.detail-text {
+  max-height: 400px;
+  overflow-y: auto;
+  line-height: 1.8;
+  color: #303133;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
 </style>

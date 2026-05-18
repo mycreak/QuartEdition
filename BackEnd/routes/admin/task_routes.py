@@ -151,29 +151,18 @@ async def submit_task():
 
     task_json = json.dumps(task_data, ensure_ascii=False)
 
+    from quart import current_app
+    from crawler.subtask import inject_subtask
+
     app = current_app
-    from config.puller_config import puller_config
-    execute_at = await app.services.db.add_delayed_task_with_limit(
+    execute_at = await inject_subtask(
+        db=app.services.db,
+        task_type=task_type,
+        task_data=task_data,
+        admin_id=admin_id,
+        task_id=task_id,
         task_json=task_json,
-        cooldown_seconds=puller_config.task_cooldown_seconds,
     )
-
-    logger.info(
-        f"任务已提交: task_id={task_id} type={task_type} "
-        f"admin_id={admin_id} execute_at={execute_at:.1f}"
-    )
-
-    try:
-        from services.task_history_service import _get_history_service
-        await _get_history_service().create(
-            task_id=task_id,
-            admin_id=admin_id,
-            task_type=task_type,
-            task_params=task_data,
-            status="submitted",
-        )
-    except Exception:
-        logger.exception("task_history 写入失败（不影响主流程）")
 
     # review_body_crawl 去重：写入 Redis key，防止重复提交
     if task_type == "review_body_crawl":

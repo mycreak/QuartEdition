@@ -37,8 +37,7 @@
                 <el-icon><User /></el-icon>
                 个人中心
               </el-dropdown-item>
-              <el-dropdown-divider />
-              <el-dropdown-item @click="handleLogout">
+              <el-dropdown-item divided @click="handleLogout">
                 <el-icon><SwitchButton /></el-icon>
                 退出登录
               </el-dropdown-item>

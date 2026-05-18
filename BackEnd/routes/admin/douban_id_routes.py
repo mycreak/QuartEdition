@@ -145,17 +145,20 @@ async def add_douban_id():
     from quart import current_app
     db = current_app.services.db
 
+    admin_id = g.user_id
+
     try:
-        # 用DB层封装的insert方法，自动参数化防注入
         await db.insert(
             "douban_ids",
             {
                 "douban_id": douban_id,
                 "title": title,
                 "source": "manual",
-                "admin_id": g.user_id,
                 "type_num": type_num,
-                "interval_id": interval_id
+                "interval_id": interval_id,
+                "admin_id": admin_id,
+                "is_acquired": 1,
+                "acquired_at": datetime.datetime.now(),
             }
         )
     except Exception as e:

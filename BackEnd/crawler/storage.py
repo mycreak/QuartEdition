@@ -39,10 +39,11 @@ logger = logging.getLogger(__name__)
 
 
 class StorageError(Exception):
-    """持久化失败。"""
+    """持久化失败（detail 会自动并入异常消息确保不被丢弃）。"""
 
     def __init__(self, message: str, detail: str = ""):
-        super().__init__(message)
+        full = f"{message}" + (f" | detail={detail}" if detail else "")
+        super().__init__(full)
         self.detail = detail
 
 
@@ -289,7 +290,10 @@ async def save_movies(movie_service, movies: List[Dict[str, Any]]) -> Dict[str, 
 
 async def _save_single_movie(movie_service, data: Dict[str, Any]) -> Optional[int]:
     """
-    保存单部电影及其关联数据。
+    事务内原子保存单部电影及其全部关联数据。
+
+    写入内容：movies + people + movie_credits + movie_genres + movie_regions + movie_ratings
+    全部在同一个事务内：任何一步失败 → 全部回滚，不残留中间数据。
 
     输入：
         movie_service: MovieService 实例
@@ -302,7 +306,7 @@ async def _save_single_movie(movie_service, data: Dict[str, Any]) -> Optional[in
     if not douban_id or not title:
         return None
 
-    # 0. 去重 — 已存在则跳过
+    # 去重在事务外 — LIMIT 1 纯读，不占长事务锁
     existing = await movie_service.get_movie_by_douban_id(douban_id)
     if existing:
         logger.debug(f"电影已存在，跳过: douban_id={douban_id} title='{title}'")
@@ -316,91 +320,101 @@ async def _save_single_movie(movie_service, data: Dict[str, Any]) -> Optional[in
         except (ValueError, TypeError):
             pass
 
-    # 1. 创建电影主记录
-    poster_url = await _mirror_poster(data.get("poster_url", ""), douban_id)
-    movie = await _safe_execute(
-        f"创建电影 '{title}'",
-        movie_service.create_movie(MovieCreate(
-            douban_id=douban_id,
-            title=title,
-            original_title=None,
-            release_year=data.get("release_year") or None,
-            release_date=release_date,
-            duration=data.get("duration") or None,
-            poster_url=poster_url,
-            imdb_id=None,
-        ))
-    )
-    if not movie:
-        return None
-
-    movie_id = movie.id
     db_layer = movie_service.db
 
-    # 2. 创建全部演职人员
-    # 优先使用 /celebrities 页面提取的完整 crew（含导演/演员/编剧/制片/美术/音乐/其他）
-    crew_list: list[dict] = data.get("crew", [])
-    if crew_list:
-        for person in crew_list:
-            pid = await _find_or_create_person(
-                db_layer, person["name"],
-                douban_id=person.get("douban_id", ""),
-            )
-            if pid:
-                await _safe_execute(
-                    f"添加{person['role_type']}: movie={movie_id} person={pid}",
-                    movie_service.add_credit(movie_id, pid, person["role_type"]),
+    # 海报转存 TOS（在事务外，避免长事务阻塞）
+    poster_url = await _mirror_poster(data.get("poster_url", ""), douban_id)
+
+    # 事务内：movies + 演职人员 + 类型 + 地区 + 评分 原子执行
+    async with db_layer.transaction() as tx:
+        # 1. movies 主表 + movies_history
+        values = {
+            "douban_id": douban_id,
+            "title": title,
+            "original_title": data.get("original_title") or "",
+            "release_year": data.get("release_year") or None,
+            "release_date": str(release_date) if release_date else "",
+            "duration": data.get("duration") or None,
+            "poster_url": poster_url,
+            "imdb_id": None,
+        }
+        movie_id = await tx.insert("movies", values, return_id=True)
+        await tx.insert("movies_history", {
+            "movie_id": movie_id,
+            "title": title,
+            "original_title": data.get("original_title") or "",
+            "release_year": data.get("release_year") or None,
+            "release_date": str(release_date) if release_date else "",
+            "duration": data.get("duration") or None,
+            "poster_url": poster_url,
+            "change_type": "create",
+            "changed_by": "system",
+        }, return_id=False)
+
+        # 2. 演职人员 + people（幂等）
+        crew_list: list[dict] = data.get("crew", [])
+        if crew_list:
+            for person in crew_list:
+                pid = await _find_or_create_person_in_tx(
+                    tx, person["name"],
+                    douban_id=person.get("douban_id", ""),
                 )
-    else:
-        # 降级：详情页快速视图 — 只有演员列表（纯名字字符串）
-        for actor_name in data.get("actors", []):
-            pid = await _find_or_create_person(db_layer, actor_name)
-            if pid:
-                await _safe_execute(
-                    f"添加演员: movie={movie_id} person={pid}",
-                    movie_service.add_credit(movie_id, pid, "actor"),
+                if pid:
+                    await tx.insert("movie_credits", {
+                        "movie_id": movie_id,
+                        "person_id": pid,
+                        "role_type": person["role_type"],
+                    }, return_id=False)
+        else:
+            # 降级：详情页快速视图 — 演员列表（纯名字字符串）
+            for actor_name in data.get("actors", []):
+                pid = await _find_or_create_person_in_tx(tx, actor_name)
+                if pid:
+                    await tx.insert("movie_credits", {
+                        "movie_id": movie_id,
+                        "person_id": pid,
+                        "role_type": "actor",
+                    }, return_id=False)
+            # 详情页快速视图 — 导演列表（含 douban_id）
+            for d in data.get("directors", []):
+                pid = await _find_or_create_person_in_tx(
+                    tx, d["name"],
+                    douban_id=d.get("douban_id", ""),
                 )
-        # 详情页快速视图 — 导演列表（含 douban_id）
-        for d in data.get("directors", []):
-            pid = await _find_or_create_person(db_layer, d["name"], douban_id=d.get("douban_id", ""))
-            if pid:
-                await _safe_execute(
-                    f"添加导演: movie={movie_id} person={pid}",
-                    movie_service.add_credit(movie_id, pid, "director"),
-                )
+                if pid:
+                    await tx.insert("movie_credits", {
+                        "movie_id": movie_id,
+                        "person_id": pid,
+                        "role_type": "director",
+                    }, return_id=False)
 
-    # 3. 创建类型并关联（类型来自 crawl_progress，只查不建）
-    types = data.get("types", [])
-    for genre_name in types:
-        tn = await _resolve_type_num(db_layer, genre_name)
-        if tn:
-            await _safe_execute(
-                f"添加类型: movie={movie_id} type_num={tn}",
-                movie_service.add_genre_to_movie(movie_id, tn)
-            )
+        # 3. 类型关联（幂等）
+        for genre_name in data.get("types", []):
+            tn = await _resolve_type_num_in_tx(tx, genre_name)
+            if tn:
+                await tx.insert("movie_genres", {
+                    "movie_id": movie_id, "type_num": tn,
+                }, return_id=False)
 
-    # 4. 创建地区并关联
-    regions = data.get("regions", [])
-    for region_name in regions:
-        rid = await _find_or_create_region(db_layer, region_name)
-        if rid:
-            await _safe_execute(
-                f"添加地区: movie={movie_id} region={rid}",
-                movie_service.add_region_to_movie(movie_id, rid)
-            )
+        # 4. 地区关联（幂等）
+        for region_name in data.get("regions", []):
+            rid = await _find_or_create_region_in_tx(tx, region_name)
+            if rid:
+                await tx.insert("movie_regions", {
+                    "movie_id": movie_id, "region_id": rid,
+                }, return_id=False)
 
-    # 5. 写入评分（幂等）
-    score = data.get("score", 0)
-    vote_count = data.get("vote_count", 0)
-    if score > 0 or vote_count > 0:
-        await _safe_execute(
-            f"写入评分: movie={movie_id} score={score}",
-            movie_service.set_rating(movie_id, RatingCreate(
-                average=score,
-                count=vote_count,
-            ))
-        )
+        # 5. 评分（幂等 — 首次写入）
+        score = data.get("score", 0)
+        vote_count = data.get("vote_count", 0)
+        if score > 0 or vote_count > 0:
+            await tx.insert("movie_ratings", {
+                "movie_id": movie_id,
+                "average": score,
+                "count": vote_count,
+            }, return_id=False)
 
+    logger.info(f"电影已保存: id={movie_id} title='{title}'")
     return movie_id
 
 
@@ -566,12 +580,27 @@ async def save_crew(movie_service, movie_id: int, crew: List[Dict[str, Any]]) ->
             if not pid:
                 continue
 
-            await tx.insert("movie_credits", {
-                "movie_id": movie_id,
-                "person_id": pid,
-                "role_type": role_type,
-            }, return_id=False)
-            saved += 1
+            try:
+                await tx.insert("movie_credits", {
+                    "movie_id": movie_id,
+                    "person_id": pid,
+                    "role_type": role_type,
+                }, return_id=False)
+                saved += 1
+            except Exception as e:
+                exc_msg = str(e)
+                # 1062: (movie_id, person_id, role_type) 已存在 → 幂等跳过
+                if "1062" in exc_msg or "Duplicate" in exc_msg:
+                    logger.debug(
+                        "[save_crew] 演职人员关联已存在: movie_id=%s person_id=%s role=%s",
+                        movie_id, pid, role_type,
+                    )
+                    continue
+                raise StorageError(
+                    f"[save_crew] movie_credits 写入失败: movie_id={movie_id} "
+                    f"person_id={pid} role_type={role_type}",
+                    detail=exc_msg,
+                ) from e
 
     logger.info(f"save_crew: movie={movie_id} saved={saved}/{len(crew)}")
     return saved

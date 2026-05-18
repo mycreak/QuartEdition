@@ -152,12 +152,14 @@ class Monitor:
             pool = get_browser_pool()
             report["worker_idle"] = pool.idle_count
             report["worker_busy"] = pool.busy_count
+            report["worker_cooldown"] = pool.cooldown_count
 
             health = pool.get_worker_health()
             report["worker_alive"] = health["alive"]
             report["worker_dead"] = len(health["dead"])
             report["worker_stuck"] = len(health["stuck"])
             report["worker_crashed_total"] = health["crashed_total"]
+            report["worker_cooldown_info"] = health.get("cooldown_info", [])
 
             if health["dead"]:
                 await self._handle_dead_workers(health)
@@ -337,6 +339,9 @@ class Monitor:
         except Exception:
             pass
 
+        # 清除 review_body_crawl 去重 key，释放被阻塞的重提交
+        await self._clear_review_dedup_key(event.task)
+
         if self.ws_manager and admin_id > 0:
             try:
                 await self.ws_manager.push(admin_id, {
@@ -483,6 +488,26 @@ class Monitor:
         except (json.JSONDecodeError, TypeError):
             return 0, 0
 
+    async def _clear_review_dedup_key(self, task: str) -> None:
+        """
+        清除 review_body_crawl 的 Redis 去重 key，防止任务完成后阻塞重提交。
+
+        只处理 review_body_crawl 类型。失败静默，不影响主流程。
+        """
+        try:
+            tdata = json.loads(task)
+            if tdata.get("type") != "review_body_crawl":
+                return
+            review_id = tdata.get("review_id", "")
+            if not review_id:
+                return
+            from db.redis import get_redis
+            r = get_redis()
+            dedup_key = f"crawler:dedup:review_body:{review_id}"
+            await r.delete(dedup_key)
+        except Exception:
+            pass
+
     async def _push_task_started(self, event: WorkerEvent) -> None:
         """
         任务开始执行 → 更新 task_history 为 running + WS 推送提交者。
@@ -586,6 +611,9 @@ class Monitor:
                 )
             except Exception:
                 pass
+
+        # 清除 review_body_crawl 去重 key，释放被阻塞的重提交
+        await self._clear_review_dedup_key(event.task)
 
         if not self.ws_manager:
             return

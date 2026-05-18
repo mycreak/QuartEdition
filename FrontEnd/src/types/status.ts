@@ -8,6 +8,8 @@ export interface SystemStatus {
   worker_alive?: number
   worker_busy?: number
   worker_idle?: number
+  worker_cooldown?: number
+  worker_cooldown_info?: Array<{ worker_id: number; cooldown_remaining: number }>
   worker_dead?: number
   worker_stuck?: number
   cpu_percent?: number
@@ -51,6 +53,7 @@ export interface QueueStatus {
   queue_size: number
   worker_busy: number
   worker_idle: number
+  worker_cooldown: number
   redis_tasks?: TaskSummary[]
   queue_tasks?: TaskSummary[]
   in_flight?: InFlightTask[]

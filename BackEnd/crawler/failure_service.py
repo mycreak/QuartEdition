@@ -144,7 +144,8 @@ def classify_exception(exc: Exception) -> FailureKind:
     if exc_name in ("ClientError", "ServerError", "HTTPError", "ClientResponseError"):
         return FailureKind.HTTP
 
-    if exc_name in ("DuplicateKeyError", "IntegrityError", "DataError", "OperationalError"):
+    if exc_name in ("DuplicateKeyError", "IntegrityError", "DataError",
+                    "OperationalError", "StorageError"):
         return FailureKind.STORAGE
 
     # ── 按消息关键字兜底 ──

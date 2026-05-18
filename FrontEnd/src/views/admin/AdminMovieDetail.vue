@@ -98,6 +98,51 @@
         </div>
       </div>
 
+      <!-- AI 总结 -->
+      <div class="section">
+        <h2 class="section-title">
+          <el-icon style="color: #409eff; margin-right: 4px;"><MagicStick /></el-icon>
+          AI 剧情总结
+        </h2>
+        <p v-if="detail.ai_summary" class="ai-summary">{{ detail.ai_summary }}</p>
+        <p v-else class="ai-summary empty">暂无AI总结</p>
+      </div>
+
+      <!-- AI 标签 -->
+      <div class="section">
+        <h2 class="section-title">
+          <el-icon style="color: #67c23a; margin-right: 4px;"><CollectionTag /></el-icon>
+          AI 标签
+        </h2>
+        <div v-if="detail.ai_tags?.length" class="tag-row">
+          <el-tag 
+            v-for="tag in detail.ai_tags" 
+            :key="tag" 
+            size="small" 
+            type="success"
+            effect="light"
+          >
+            {{ tag }}
+          </el-tag>
+        </div>
+        <p v-else class="empty">暂无AI标签</p>
+      </div>
+
+      <!-- 短评词云 -->
+      <div class="section">
+        <h2 class="section-title">
+          <el-icon style="color: #8b5cf6; margin-right: 4px;"><ChatDotRound /></el-icon>
+          短评词云
+        </h2>
+        <CommentWordCloud 
+          :words="wordCloudWords" 
+          :loading="wordCloudLoading" 
+          :error="wordCloudError"
+          @word-click="handleWordClick"
+          @retry="fetchWordCloud(movieId)"
+        />
+      </div>
+
       <el-divider />
 
       <el-card class="related-section">
@@ -271,9 +316,12 @@ import { adminReviewsApi } from '@/api/admin/reviews'
 import type { MovieDetail, Person } from '@/types/movie'
 import ErrorAlert from '@/components/common/ErrorAlert.vue'
 import { formatRating, formatCount, formatCrewRole } from '@/utils/format'
-import { StarFilled, VideoCamera, Edit, Plus, Close, Upload } from '@element-plus/icons-vue'
+import { StarFilled, VideoCamera, Edit, Plus, Close, Upload, MagicStick, CollectionTag, ChatDotRound } from '@element-plus/icons-vue'
 import { VueCropper } from 'vue-cropper/next'
 import 'vue-cropper/next/dist/index.css'
+import CommentWordCloud from '@/components/common/CommentWordCloud.vue'
+import { moviesApi } from '@/api/movies'
+import type { WordCloudItem } from '@/types/movie'
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作', 6: '情色', 7: '歌舞', 8: '儿童', 10: '悬疑', 11: '剧情',
@@ -475,6 +523,29 @@ function getStarPercent(stars: number): number {
   return Math.round((Number(distribution[String(stars)]) || 0) / count * 100)
 }
 
+/* ── 词云 ── */
+const wordCloudWords = ref<WordCloudItem[]>([])
+const wordCloudLoading = ref(false)
+const wordCloudError = ref('')
+
+async function fetchWordCloud(movieId: number): Promise<void> {
+  wordCloudLoading.value = true
+  wordCloudError.value = ''
+  try {
+    const res = await moviesApi.getWordCloud(movieId)
+    if (res.data.success) {
+      wordCloudWords.value = res.data.data.words
+    } else {
+      wordCloudError.value = '词云生成失败'
+    }
+  } catch (err: any) {
+    wordCloudError.value = err.response?.data?.error || '加载失败，请稍后重试'
+    wordCloudWords.value = []
+  } finally {
+    wordCloudLoading.value = false
+  }
+}
+
 async function loadDetail() {
   if (!movieId) { error.value = '无效的电影 ID'; return }
   loading.value = true; error.value = ''
@@ -484,6 +555,7 @@ async function loadDetail() {
     fetchLocalCounts()
     // 页面加载时预加载所有地区列表，避免打开弹窗时才加载导致空白
     fetchAllRegions()
+    fetchWordCloud(movieId)
   } catch (e: any) {
     error.value = e?.response?.status === 404 ? '电影不存在' : '加载失败，请检查后端服务'
   } finally { loading.value = false }
@@ -498,6 +570,10 @@ async function fetchLocalCounts() {
     localReviewCount.value = revRes.data.total
     localCommentCount.value = comRes.data.total
   } catch { /* ignore */ }
+}
+
+function handleWordClick(word: WordCloudItem): void {
+  router.push({ path: '/admin/reviews', query: { tab: 'comments', movie_id: String(movieId) } })
 }
 
 function goToReviews(tab: string) {
@@ -824,4 +900,19 @@ onMounted(() => {
 .related-label { font-size: 13px; color: #909399; }
 .related-value { font-size: 14px; color: #303133; font-weight: 500; margin-right: auto; }
 .not-found { padding: 60px 0; }
+
+.ai-summary {
+  line-height: 1.8;
+  color: #606266;
+  padding: 8px 0 12px 0;
+  text-indent: 2em;
+}
+.ai-summary.empty,
+.empty {
+  color: #c0c4cc;
+  text-align: center;
+  text-indent: 0;
+  padding: 32px 0;
+  margin: 0;
+}
 </style>

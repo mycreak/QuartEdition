@@ -68,7 +68,7 @@
                     选择电影
                   </el-button>
                 </div>
-                <div class="form-hint mt-1">支持多维度筛选查找电影，选择后自动加载待爬长评</div>
+                <div class="form-hint mt-1">仅显示已有待爬长评的电影，选择后自动加载待爬列表</div>
               </el-form-item>
 
               <!-- 长评列表 -->
@@ -129,7 +129,14 @@
                   style="width: 100%"
                   clearable
                   @select="onDoubanIdSelect"
-                />
+                >
+                  <template #default="{ item }">
+                    <div class="autocomplete-item">
+                      <span class="douban-id">{{ item.value }}</span>
+                      <span class="movie-title">{{ item.title }}</span>
+                    </div>
+                  </template>
+                </el-autocomplete>
                 <div class="claimed-hint" v-if="claimedCount > 0">
                   🟢 已认领 {{ claimedCount }} 个豆瓣电影 ID，可在上方搜索选取
                 </div>
@@ -319,6 +326,7 @@
     <!-- 电影选择弹窗 -->
     <MovieSelector
       v-model="movieSelectorVisible"
+      :scene="movieSelectScene"
       @select="onMovieSelected($event)"
     />
 
@@ -363,7 +371,7 @@ import CookieSelector from '@/components/common/CookieSelector.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import MovieSelector from '@/components/common/MovieSelector.vue'
 import type { QueueStatus } from '@/types/status'
-import type { MovieWithPendingReviews, PendingReview, TaskSubmitResponse } from '@/types/task'
+import type { PendingReview, TaskSubmitResponse } from '@/types/task'
 import type { Movie } from '@/types/movie'
 
 const authStore = useAuthStore()
@@ -423,8 +431,6 @@ const movieSelectorVisible = ref(false)
 const selectedMovieTitle = ref('')
 
 // 批量长评相关状态
-const moviesWithPendingReviews = ref<MovieWithPendingReviews[]>([])
-const moviesLoading = ref(false)
 const pendingReviews = ref<PendingReview[]>([])
 const pendingReviewsLoading = ref(false)
 const selectedReviewIds = ref<string[]>([])
@@ -442,6 +448,7 @@ const queue = reactive<QueueStatus>({
   queue_size: 0,
   worker_busy: 0,
   worker_idle: 0,
+  worker_cooldown: 0,
   in_flight: [],
   queue_tasks: [],
   redis_tasks: [],
@@ -637,18 +644,15 @@ function onTypeChange() {
     fetchCookieOptions()
   }
   
-  // 如果是review_body_crawl，加载待爬电影列表
-  if (taskForm.type === 'review_body_crawl') {
-    fetchMoviesWithPendingReviews()
-  }
 }
 
-async function queryClaimedIds(query: string, cb: (items: { value: string; label: string }[]) => void) {
+async function queryClaimedIds(query: string, cb: (items: { value: string; label: string; title: string }[]) => void) {
   try {
     const res = await adminDoubanIdsApi.list({ is_acquired: '1', keyword: query || '', page_size: 20 })
     const items = (res.data.items || []).map(item => ({
       value: item.douban_id,
       label: `${item.douban_id}  ${item.title}`,
+      title: item.title,
     }))
     cb(items)
   } catch {
@@ -703,25 +707,13 @@ function onMovieSelected(movie: Movie | undefined) {
   if (movieSelectScene.value === 'review_body') {
     // 长评正文抓取场景
     taskForm.selected_movie_id = movie.id
+    taskForm.douban_id = movie.douban_id
     selectedMovieTitle.value = movie.title
     // 自动加载该电影的待爬长评
     fetchPendingReviews(1)
   } else {
     // 长评/短评列表抓取场景
     taskForm.douban_id = movie.douban_id
-  }
-}
-
-// 批量长评相关函数
-async function fetchMoviesWithPendingReviews() {
-  moviesLoading.value = true
-  try {
-    const res = await adminMoviesApi.getMoviesWithPendingReviews()
-    moviesWithPendingReviews.value = res.data.items || []
-  } catch {
-    ElMessage.error('获取待爬电影列表失败')
-  } finally {
-    moviesLoading.value = false
   }
 }
 
@@ -779,11 +771,6 @@ function toggleAllReviews() {
     selectedReviewIds.value = pendingReviews.value.map(r => r.review_id)
   }
 }
-
-// 获取选中电影的douban_id
-const selectedMovie = computed(() => {
-  return moviesWithPendingReviews.value.find(m => m.movie_id === taskForm.selected_movie_id)
-})
 
 // 全选checkbox的状态
 const toggleAllCheck = computed({
@@ -866,7 +853,7 @@ async function submitTask() {
 }
 
 async function submitBatchReviewBodyTasks() {
-  if (!selectedMovie.value) {
+  if (!taskForm.selected_movie_id) {
     ElMessage.error('请先选择电影')
     return
   }
@@ -882,7 +869,7 @@ async function submitBatchReviewBodyTasks() {
   const skipReasons: string[] = []
 
   try {
-    const doubanId = selectedMovie.value.douban_id || taskForm.douban_id
+    const doubanId = taskForm.douban_id
     
     for (const reviewId of selectedReviewIds.value) {
       const review = pendingReviews.value.find(r => r.review_id === reviewId)
@@ -992,6 +979,10 @@ async function showHistDetail(row: TaskHistory) {
 }
 
 let unsubTaskStarted: (() => void) | null = null
+let unsubTaskSuccess: (() => void) | null = null
+let unsubTaskFailure: (() => void) | null = null
+let unsubTaskProgress: (() => void) | null = null
+let unsubSystemStatus: (() => void) | null = null
 
 onMounted(() => {
   fetchQueue()
@@ -999,18 +990,51 @@ onMounted(() => {
   fetchHistory()
 
   unsubTaskStarted = wsManager.on('task_started', () => {
-    fetchQueue()
+    fetchProgressDetail()
+  })
+
+  unsubTaskSuccess = wsManager.on('task_success', () => {
+    fetchProgressDetail()
+    fetchHistory()
+  })
+
+  unsubTaskFailure = wsManager.on('task_failure', () => {
+    fetchProgressDetail()
+    fetchHistory()
+  })
+
+  unsubTaskProgress = wsManager.on('task_progress', () => {
+    fetchProgressDetail()
+  })
+
+  unsubSystemStatus = wsManager.on('system_status', (status: any) => {
+    if (status) {
+      queue.redis_size = status.redis_size || 0
+      queue.queue_size = status.queue_size || 0
+      queue.worker_busy = status.worker_busy || 0
+      queue.worker_idle = status.worker_idle || 0
+      queue.worker_cooldown = status.worker_cooldown || 0
+    }
   })
 })
 
 onActivated(() => {
   fetchHistory()
+  fetchQueue()
 })
 
 onUnmounted(() => {
   stopSecondsTimer()
   unsubTaskStarted?.()
+  unsubTaskSuccess?.()
+  unsubTaskFailure?.()
+  unsubTaskProgress?.()
+  unsubSystemStatus?.()
   unsubTaskStarted = null
+  unsubTaskSuccess = null
+  unsubTaskFailure = null
+  unsubTaskProgress = null
+  unsubSystemStatus = null
 })
 </script>
 
@@ -1029,6 +1053,25 @@ onUnmounted(() => {
 .progress-cell .el-progress { flex: 1; }
 .progress-text { font-size: 13px; color: #555; white-space: nowrap; }
 .toolbar { margin-bottom: 12px; }
+
+.autocomplete-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.autocomplete-item .douban-id {
+  font-family: monospace;
+  color: #909399;
+  font-size: 14px;
+  min-width: 80px;
+}
+
+.autocomplete-item .movie-title {
+  color: #303133;
+  font-size: 14px;
+}
 .params-text { font-size: 13px; color: #555; }
 .paginator { margin-top: 16px; justify-content: flex-end; }
 .detail-grid { display: flex; flex-direction: column; gap: 10px; }

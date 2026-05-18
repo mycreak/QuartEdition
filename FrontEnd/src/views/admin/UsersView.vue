@@ -1,6 +1,6 @@
 <template>
   <div class="users-page">
-    <h2 class="page-title">用户管理</h2>
+    <h2 class="page-title">用户状态管理</h2>
 
     <el-button type="primary" @click="openCreate" class="create-btn">创建用户</el-button>
 

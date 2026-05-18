@@ -17,9 +17,28 @@
       <el-card v-if="authStore.checkPermission('system:monitor')" class="status-card">
         <div class="card-header"><span class="card-icon">⚙️</span><span class="card-label">Worker 状态</span></div>
         <div class="worker-stats">
-          <span class="worker-num alive">{{ sys.worker_alive }} 存活</span>
-          <span class="worker-num busy">{{ sys.worker_busy }} 忙碌</span>
-          <span class="worker-num idle">{{ sys.worker_idle }} 空闲</span>
+          <div class="worker-stat-item">
+            <span class="worker-num alive">{{ sys.worker_alive }}</span>
+            <span class="worker-label">存活</span>
+          </div>
+          <div class="worker-stat-item">
+            <span class="worker-num busy">{{ sys.worker_busy }}</span>
+            <span class="worker-label">忙碌</span>
+          </div>
+          <div class="worker-stat-item">
+            <span class="worker-num cooldown">{{ sys.worker_cooldown }}</span>
+            <span class="worker-label">冷却</span>
+          </div>
+          <div class="worker-stat-item">
+            <span class="worker-num idle">{{ sys.worker_idle }}</span>
+            <span class="worker-label">空闲</span>
+          </div>
+        </div>
+        <div v-if="sys.worker_cooldown_info && sys.worker_cooldown_info.length > 0" class="cooldown-detail">
+          <div v-for="info in sys.worker_cooldown_info" :key="info.worker_id" class="cooldown-item">
+            <el-tag size="small" type="info">Worker {{ info.worker_id }}</el-tag>
+            <span class="cooldown-time">{{ info.cooldown_remaining.toFixed(0) }}s</span>
+          </div>
         </div>
       </el-card>
 
@@ -71,8 +90,8 @@
           <div class="queue-item" v-if="queue.queue_size > 0">
             <el-tag type="warning" size="large">🟡 队列待消费 ({{ queue.queue_size }} 个任务)</el-tag>
           </div>
-          <div class="queue-item" v-if="queue.worker_busy > 0">
-            <el-tag type="success" size="large">🟢 Worker 工作中 ({{ queue.worker_busy }} 忙碌 / {{ queue.worker_idle }} 空闲)</el-tag>
+          <div class="queue-item" v-if="queue.worker_busy > 0 || queue.worker_cooldown > 0">
+            <el-tag type="success" size="large">🟢 Worker 工作中 ({{ queue.worker_busy }} 忙碌 / {{ queue.worker_cooldown }} 冷却 / {{ queue.worker_idle }} 空闲)</el-tag>
           </div>
           <div class="queue-item" v-if="queue.redis_size === 0 && queue.queue_size === 0 && queue.worker_busy === 0 && !queueLoading">
             <el-tag type="success" size="large">✅ 空闲 — 无待处理任务</el-tag>
@@ -174,6 +193,7 @@ import { adminLogsApi, type LogEntry } from '@/api/admin/monitor'
 import { adminRateLimitApi, type RateLimitEvent, type RateLimitResponse } from '@/api/admin/monitor'
 import { adminDebugApi } from '@/api/admin/monitor'
 import { wsManager } from '@/api/ws'
+import { ElMessage } from 'element-plus'
 import type { QueueStatus, InFlightTask } from '@/types/status'
 
 function typeLabel(t: string): string {
@@ -185,14 +205,23 @@ const authStore = useAuthStore()
 const sys = reactive({
   puller_state: '' as string, puller_fetched: null as number | null, puller_empty_polls: null as number | null,
   queue_size: 0, queue_maxsize: 1000,
-  worker_alive: 0, worker_busy: 0, worker_idle: 0,
+  worker_alive: 0, worker_busy: 0, worker_idle: 0, worker_cooldown: 0, worker_cooldown_info: [] as Array<{ worker_id: number; cooldown_remaining: number }>,
   cpu_percent: null as number | null, memory_percent: null as number | null,
   db_mysql: false, db_redis: false, db_mongodb: false,
   cookie_saved_at: null as string | null, cookie_has_dbcl2: false, cookie_valid: false,
   proxy: undefined as { alive: number; suspicious: number; banned: number; total: number } | undefined,
 })
 
-const queue = reactive<QueueStatus>({ redis_size: 0, queue_size: 0, worker_busy: 0, worker_idle: 0, in_flight: [], queue_tasks: [], redis_tasks: [] })
+const queue = reactive<QueueStatus>({ 
+  redis_size: 0, 
+  queue_size: 0, 
+  worker_busy: 0, 
+  worker_idle: 0, 
+  worker_cooldown: 0, 
+  in_flight: [], 
+  queue_tasks: [], 
+  redis_tasks: [] 
+})
 const queueLoading = ref(false)
 const showDetails = ref(false)
 const detailLoading = ref(false)
@@ -223,10 +252,8 @@ async function debugPushEvent(eventType: 'task_failure' | 'worker_crash') {
   loadingKey.value = true
   try {
     const res = await adminDebugApi.pushEvent({ event_type: eventType })
-    const { ElMessage } = await import('element-plus')
     ElMessage.success(res.data.message)
   } catch (e: any) {
-    const { ElMessage } = await import('element-plus')
     ElMessage.error(e?.response?.data?.error || '推送失败')
   } finally {
     loadingKey.value = false
@@ -286,6 +313,7 @@ onMounted(() => {
     if (now - _lastWsUpdate < 1000) return
     _lastWsUpdate = now
 
+    const oldCooldownCount = sys.worker_cooldown
     Object.assign(sys, {
       puller_state: msg.puller_state,
       puller_fetched: msg.puller_fetched,
@@ -295,6 +323,8 @@ onMounted(() => {
       worker_alive: msg.worker_alive,
       worker_busy: msg.worker_busy,
       worker_idle: msg.worker_idle,
+      worker_cooldown: msg.worker_cooldown ?? 0,
+      worker_cooldown_info: msg.worker_cooldown_info ?? [],
       cpu_percent: msg.cpu_percent,
       memory_percent: msg.memory_percent,
       db_mysql: msg.db_mysql,
@@ -306,11 +336,22 @@ onMounted(() => {
       proxy: msg.proxy ?? sys.proxy,
     })
 
+    // 当冷却中 worker 数量增加时，显示通知
+    if (msg.worker_cooldown && msg.worker_cooldown > oldCooldownCount) {
+      const newCooldownCount = msg.worker_cooldown - oldCooldownCount
+      ElMessage({
+        message: `${newCooldownCount} 个 Worker 进入冷却状态`,
+        type: 'info',
+        duration: 3000,
+      })
+    }
+
     Object.assign(queue, {
       redis_size: msg.redis_size ?? queue.redis_size,
       queue_size: msg.queue_size ?? queue.queue_size,
       worker_busy: msg.worker_busy ?? queue.worker_busy,
       worker_idle: msg.worker_idle ?? queue.worker_idle,
+      worker_cooldown: msg.worker_cooldown ?? queue.worker_cooldown,
     })
   })
 
@@ -323,7 +364,6 @@ onMounted(() => {
   })
 
   unsubStorageAlert = wsManager.on('storage_alert', async (msg) => {
-    const { ElMessage } = await import('element-plus')
     ElMessage.warning({
       message: msg.message || '数据库写入异常，请检查 MySQL/Redis/MongoDB 连接',
       duration: 0,
@@ -358,11 +398,17 @@ onUnmounted(() => {
 .status-card .card-label { font-weight: 600; font-size: 15px; color: #333; }
 .status-card .card-detail { margin-top: 8px; font-size: 12px; color: #999; }
 .status-card.card-warn { border: 1px solid #f56c6c; }
-.worker-stats { display: flex; gap: 12px; }
-.worker-num { font-size: 20px; font-weight: 700; }
+.worker-stats { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.worker-stat-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.worker-num { font-size: 24px; font-weight: 700; line-height: 1.2; }
 .worker-num.alive { color: #67c23a; }
 .worker-num.busy { color: #e6a23c; }
+.worker-num.cooldown { color: #409eff; }
 .worker-num.idle { color: #909399; }
+.worker-label { font-size: 12px; color: #999; }
+.cooldown-detail { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cooldown-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cooldown-time { color: #909399; font-weight: 500; }
 .proxy-stats { display: flex; gap: 4px; align-items: baseline; }
 .proxy-num { font-size: 22px; font-weight: 700; margin-right: 2px; }
 .proxy-num.alive { color: #67c23a; }

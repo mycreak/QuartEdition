@@ -28,7 +28,32 @@
           <span class="review-author">{{ review.author }}</span>
           <span class="review-date">{{ formatDateTime(review.created_at) }}</span>
         </div>
-        <p class="review-content">{{ review.content }}</p>
+        <div class="review-content-wrapper">
+          <div
+            v-if="!review.expanded && review.content && review.content.length > 250"
+            class="review-content-preview"
+          >
+            {{ review.content.slice(0, 250) }}...
+          </div>
+          <div
+            v-else-if="review.expanded"
+            class="review-content-full"
+            v-html="formatContent(review.content)"
+          ></div>
+          <p
+            v-else
+            class="review-content"
+          >{{ review.content }}</p>
+          <el-button
+            v-if="review.content && review.content.length > 250"
+            type="primary"
+            link
+            size="small"
+            @click="toggleReviewExpand(review)"
+          >
+            {{ review.expanded ? '收起' : '展开全文' }}
+          </el-button>
+        </div>
       </div>
     </div>
 
@@ -50,7 +75,7 @@ import ErrorAlert from '@/components/common/ErrorAlert.vue'
 import { formatRating, formatDateTime } from '@/utils/format'
 import { ChatLineRound, StarFilled } from '@element-plus/icons-vue'
 
-const reviews = ref<Review[]>([])
+const reviews = ref<(Review & { expanded?: boolean })[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -70,6 +95,15 @@ async function fetchReviews(p = 1): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+function formatContent(content: string | undefined): string {
+  if (!content) return ''
+  return content.replace(/\n/g, '<br>')
+}
+
+function toggleReviewExpand(review: { expanded?: boolean }): void {
+  review.expanded = !review.expanded
 }
 
 function handlePageChange(p: number): void {
@@ -163,6 +197,30 @@ onMounted(() => {
 
 .review-author {
   color: #0f3460;
+}
+
+.review-content-wrapper {
+  margin-top: 4px;
+}
+
+.review-content-preview {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #555;
+}
+
+.review-content-full {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #555;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
 }
 
 .review-content {

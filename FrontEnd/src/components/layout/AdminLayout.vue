@@ -55,7 +55,7 @@
 
         <el-menu-item v-if="authStore.checkPermission('user:manage')" index="/admin/users">
           <el-icon><User /></el-icon>
-          <template #title>用户管理</template>
+          <template #title>用户状态管理</template>
         </el-menu-item>
 
         <el-menu-item v-if="authStore.checkPermission('system:monitor')" index="/admin/infra">

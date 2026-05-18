@@ -151,18 +151,99 @@ def parse_movie_detail(html_str: str) -> Dict[str, Any]:
             if date_candidates:
                 release_date = min(date_candidates)
 
-    # 封面图（豆瓣详情页使用 <img rel="v:image" src="...">）
+    # 封面图 — 多道兜底，从最精确到最通用
     poster_url = ""
-    img_match = re.search(
-        r'<img[^>]*rel="v:image"[^>]*src="([^"]+)"',
+
+    # ① img[rel="v:image"] — 先整体匹配 img 标签，再从标签内提取 src
+    #    豆瓣详情页主海报固定使用 rel="v:image" 语义标记
+    img_tag_match = re.search(
+        r'<img[^>]*\brel="v:image"[^>]*>',
         html_str,
         re.IGNORECASE,
     )
-    if img_match:
-        poster_url = img_match.group(1)
-    else:
-        # 降级: property="v:image" + content+""（兼容非标准页面）
+    if img_tag_match:
+        src_match = re.search(r'src="([^"]+)"', img_tag_match.group(), re.IGNORECASE)
+        if src_match:
+            poster_url = src_match.group(1)
+
+    # ② <a class="nbgnbg" — 封面图的父级链接，豆瓣新页面结构
+    #    点击海报跳转图片页的 <a> 标签，内部 <img> 不含 rel="v:image" 时靠此兜底
+    if not poster_url:
+        poster_link_match = re.search(
+            r'<a[^>]*href="[^"]*/subject/\d+/photos?[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"',
+            html_str,
+            re.IGNORECASE,
+        )
+        if poster_link_match:
+            poster_url = poster_link_match.group(1)
+
+    # ③ <div id="mainpic"> — 豆瓣传统海报容器，提取其中第一张 img 的 src
+    if not poster_url:
+        mainpic_match = re.search(
+            r'<div\s+id="mainpic"[^>]*>(.*?)</div>',
+            html_str,
+            re.DOTALL,
+        )
+        if mainpic_match:
+            src_in_mainpic = re.search(r'<img[^>]*src="([^"]+)"', mainpic_match.group(1))
+            if src_in_mainpic:
+                poster_url = src_in_mainpic.group(1)
+
+    # ④ <meta property="v:image" content="..."> — 兜底，豆瓣可能不再提供
+    if not poster_url:
         poster_url = _get_v_attr("image") or ""
+
+    # ⑤ JSON-LD — 限制在 <script type="application/ld+json"> 块内提取
+    #    先取完整 script 块（非贪婪到 </script>），再从中搜 "image"
+    #    避免全局匹配误伤演职人员/影人的 image 字段
+    if not poster_url:
+        ld_block = re.search(
+            r'<script\s+type="application/ld\+json"[^>]*>(.*?)</script>',
+            html_str,
+            re.DOTALL,
+        )
+        if ld_block:
+            ld_match = re.search(r'"image"\s*:\s*"([^"]+)"', ld_block.group(1))
+            if ld_match:
+                poster_url = ld_match.group(1)
+
+    # ⑥ <meta property="og:image" content="..."> — Open Graph 标准
+    if not poster_url:
+        og_match = re.search(
+            r'<meta[^>]*property="og:image"[^>]*content="([^"]+)"',
+            html_str,
+            re.IGNORECASE,
+        )
+        if og_match:
+            poster_url = og_match.group(1)
+
+    # ── 协议归一化 ──
+    # 豆瓣 CDN 图片常用 //img9.doubanio.com/... 协议相对格式
+    if poster_url and poster_url.startswith("//"):
+        poster_url = "https:" + poster_url
+
+    # ── 过滤非图片 URL（兜底匹配可能抓到无关链接） ──
+    if poster_url and not any(
+        poster_url.endswith(ext) for ext in (".webp", ".jpg", ".jpeg", ".png", ".gif", ".bmp")
+    ):
+        logger.warning(
+            "parse_movie_detail: poster_url 可能不是图片URL，已丢弃: %s",
+            poster_url[:150],
+        )
+        poster_url = ""
+
+    if not poster_url:
+        # 诊断日志：列出 HTML 中所有可能的图片 URL，便于排查豆瓣新页面结构
+        all_potential = re.findall(
+            r'(?:src|content|data-src)=["\']([^"\']*(?:poster|photo|image)[^"\']*\.(?:webp|jpg|png))["\']',
+            html_str,
+            re.IGNORECASE,
+        )
+        logger.warning(
+            "parse_movie_detail: poster_url 提取失败，HTML 前 500 字: %s | 候选海报URL: %s",
+            html_str[:500],
+            all_potential[:5] if all_potential else "无",
+        )
 
     # 类型（去重 — 详情页可能同一 genre 出现多次）
     types = list(dict.fromkeys(re.findall(r'<span property="v:genre">(.*?)</span>', html_str)))

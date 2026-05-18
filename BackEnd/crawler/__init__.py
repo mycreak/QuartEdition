@@ -31,6 +31,7 @@ crawler/__init__.py
 import asyncio
 import json
 import logging
+import os
 import random
 import time
 from typing import Optional
@@ -162,6 +163,20 @@ class CrawlerEngine:
         else:
             raise NotImplementedError(f"未知任务类型: {task_type}")
 
+    async def _browser_fetch(self, url: str) -> str:
+        """
+        信号量保护的 BrowserFetcher.fetch() — 并发上限由 browser_concurrency 控制。
+        """
+        async with self._browser_sem:
+            return await self._browser.fetch(url)
+
+    async def _browser_fetch_page(self, url: str, identity=None):
+        """
+        信号量保护的 BrowserFetcher.fetch_page() — 并发上限由 browser_concurrency 控制。
+        """
+        async with self._browser_sem:
+            return await self._browser.fetch_page(url, identity)
+
     async def _emit_stage(self, task_str: str, stage: str, worker_id: int = -1):
         """
         发送进度事件给 Monitor — Crawler 内部阶段上报。
@@ -219,6 +234,8 @@ class CrawlerEngine:
 
         logger.info(f"[movie_crawl] task={task_id} type={type_num} interval={interval_id}")
 
+        task_str = json.dumps(data, ensure_ascii=False)
+
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法访问数据库")
 
@@ -247,6 +264,7 @@ class CrawlerEngine:
         douban_total = progress_rows[0].get("douban_total", 0) if progress_rows else 0
 
         if not douban_total:
+            await self._emit_stage(task_str, "📡 正在获取豆瓣榜单总量...")
             count_url = (
                 "https://movie.douban.com/j/chart/top_list_count"
                 f"?type={type_num}&interval_id={interval_id}&action="
@@ -272,9 +290,24 @@ class CrawlerEngine:
             "https://movie.douban.com/j/chart/top_list"
             f"?type={type_num}&interval_id={interval_id}&start={start}&limit=20"
         )
+        await self._emit_stage(task_str, "📡 正在获取电影 ID 列表...")
         result = await self._api.fetch(list_url)
         if not isinstance(result, list):
-            raise ValueError(f"电影 API 返回非列表类型: {type(result).__name__}")
+            _dump_data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+            os.makedirs(_dump_data_dir, exist_ok=True)
+            _dump_path = os.path.join(
+                _dump_data_dir,
+                f"movie_crawl_fail_t{type_num}_i{interval_id}_{int(time.time())}.txt"
+            )
+            with open(_dump_path, "w", encoding="utf-8") as _f:
+                _f.write(result if isinstance(result, str) else repr(result))
+            logger.error(
+                f"[movie_crawl] API 返回非列表类型: {type(result).__name__}, "
+                f"已保存至 {_dump_path}"
+            )
+            raise ValueError(
+                f"电影 API 返回非列表类型: {type(result).__name__}, 已保存至 {_dump_path}"
+            )
 
         id_list = parse_movie_list(result)
         logger.info(f"[movie_crawl] task={task_id} 榜单返回 {len(id_list)} 条")
@@ -283,6 +316,7 @@ class CrawlerEngine:
         #    两者在同一事务中提交/回滚，保证断点续爬的 start 偏移正确
         #    即使多次提交同类型-区间的 movie_crawl，ids_fetched 也始终与实际 API 分页一致
         written = 0
+        await self._emit_stage(task_str, "💾 正在写入电影 ID 到数据库...")
         try:
             async with db.transaction() as tx:
                 for item in id_list:
@@ -360,7 +394,7 @@ class CrawlerEngine:
         max_attempts = 2
         for attempt in range(max_attempts):
             await self._emit_stage(task_str, f"📡 正在请求详情页 (第{attempt+1}次): {detail_url}")
-            html, ok, snapshot = await self._browser.fetch_page(detail_url, identity)
+            html, ok, snapshot = await self._browser_fetch_page(detail_url, identity)
             if ok:
                 await self._emit_stage(task_str, f"✅ 详情页获取成功")
                 break
@@ -380,11 +414,36 @@ class CrawlerEngine:
         detail = parse_movie_detail(html)
         detail["douban_id"] = douban_id
 
+        # 封面提取失败 → 保存 HTML 用于诊断
+        if not detail.get("poster_url"):
+            _pd = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+            os.makedirs(_pd, exist_ok=True)
+            _pp = os.path.join(_pd, f"movie_scrape_noposter_{douban_id}_{int(time.time())}.html")
+            with open(_pp, "w", encoding="utf-8") as _f:
+                _f.write(html)
+            logger.warning(
+                f"[movie_scrape] douban_id={douban_id} poster_url 为空, "
+                f"HTML 已保存至 {_pp}"
+            )
+
         # ③ 写入电影基础信息（原子事务：movies + genres + regions + ratings）
         await self._emit_stage(task_str, "💾 正在写入电影基础信息...")
         movie_id = await storage.save_movie_basic(self._movie_service, detail)
         if not movie_id:
-            raise ValueError(f"电影基础信息写入失败: douban_id={douban_id}")
+            # 诊断：收集现场信息写入异常消息
+            parsed_title = detail.get("title", "")
+            parsed_types = detail.get("types", [])
+            parsed_score = detail.get("score", 0)
+            existing_check = await self._movie_service.get_movie_by_douban_id(douban_id)
+            html_preview = html[:500] if html else ""
+            raise ValueError(
+                f"电影基础信息写入失败: douban_id={douban_id} "
+                f"parsed_title='{parsed_title}' "
+                f"types={parsed_types} "
+                f"score={parsed_score} "
+                f"already_exists={bool(existing_check)} "
+                f"html[:200]={html_preview[:200]}"
+            )
 
         # ④ 更新 douban_ids（标记已认领 + 已爬取完成）
         raw = self._movie_service.db.raw_mysql()
@@ -416,13 +475,25 @@ class CrawlerEngine:
         CELEB_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/celebrities"
 
         page_url = SUBJECT_PAGE_BASE.format(douban_id=douban_id)
-        html = await self._browser.fetch(page_url)
+        html = await self._browser_fetch(page_url)
         detail = parse_movie_detail(html)
         detail["douban_id"] = douban_id
 
+        # 封面提取失败 → 保存 HTML 用于诊断
+        if not detail.get("poster_url"):
+            _pd = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+            os.makedirs(_pd, exist_ok=True)
+            _pp = os.path.join(_pd, f"movie_detail_noposter_{douban_id}_{int(time.time())}.html")
+            with open(_pp, "w", encoding="utf-8") as _f:
+                _f.write(html)
+            logger.warning(
+                f"[movie_detail] douban_id={douban_id} poster_url 为空, "
+                f"HTML 已保存至 {_pp}"
+            )
+
         try:
             celeb_url = CELEB_PAGE_BASE.format(douban_id=douban_id)
-            celeb_html = await self._browser.fetch(celeb_url)
+            celeb_html = await self._browser_fetch(celeb_url)
             detail["crew"] = parse_personnel(celeb_html)
         except Exception as e:
             logger.error(f"[电影详情补爬] task={task_id} douban_id={douban_id} 参演人员获取失败: {e}")
@@ -437,6 +508,11 @@ class CrawlerEngine:
             f"[电影详情补爬] task={task_id} douban_id={douban_id} 完成: "
             f"created={stats['created']} skipped={stats['skipped']}"
         )
+        if stats["failures"]:
+            raise RuntimeError(
+                f"save_movies 失败: "
+                + "; ".join(f"{f['movie_data'].get('title', '?')}: {f['error']}" for f in stats["failures"])
+            )
 
     async def _handle_review_crawl(self, data: dict) -> None:
         """
@@ -474,6 +550,7 @@ class CrawlerEngine:
             movie_id = rows[0]["movie_id"]
 
         cfg = crawler_config
+        task_str = json.dumps(data, ensure_ascii=False)
 
         # 1. 查询已采集数量，计算偏移量（顺延模式）
         count_result = await raw.execute_query(
@@ -490,6 +567,7 @@ class CrawlerEngine:
         # 2. 随机反爬等待（浏览模拟已内嵌至 fetcher._do_fetch）
         pre_wait = random.uniform(8, 20)
         logger.info(f"[review_crawl] 反爬等待 {pre_wait:.0f}s...")
+        await self._emit_stage(task_str, f"⏳ 反爬等待 {pre_wait:.0f}s...")
         await asyncio.sleep(pre_wait)
 
         # 3. 翻页爬取（最多两次翻页：当前页 + 下一页，每页20条中取够5条）
@@ -503,13 +581,14 @@ class CrawlerEngine:
             logger.info(f"[review_crawl] 第{page_count+1}次翻页: {page_url}")
             page_count += 1
 
+            await self._emit_stage(task_str, f"📡 正在获取长评列表 (第{page_count}页)...")
             try:
                 if identity:
-                    html, ok, _ = await self._browser.fetch_page(page_url, identity)
+                    html, ok, _ = await self._browser_fetch_page(page_url, identity)
                     if not ok:
                         raise FetcherError(f"列表页请求失败: {page_url}")
                 else:
-                    html = await self._browser.fetch(page_url)
+                    html = await self._browser_fetch(page_url)
                 meta_list = parse_review_list(html)
                 if not meta_list:
                     logger.info(f"[review_crawl] offset={offset} 无更多评论，停止翻页")
@@ -539,6 +618,9 @@ class CrawlerEngine:
                     f"[review_crawl] offset={offset}: 解析{len(meta_list)}条, 新增{new_count}条, "
                     f"累计{total_inserted}/{cfg.review_crawl_max_new}"
                 )
+
+                if new_count > 0:
+                    await self._emit_stage(task_str, f"💾 已入库 {new_count} 条长评摘要")
 
                 if total_inserted >= cfg.review_crawl_max_new:
                     break
@@ -587,13 +669,10 @@ class CrawlerEngine:
             f"douban_id={douban_id} title='{title}' author='{author}'"
         )
 
+        task_str = json.dumps(data, ensure_ascii=False)
+
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法访问 movie_review 表")
-
-        # 解析可选的 identity
-        identity = None
-        if self._identity_manager is not None and (cookie_id or proxy_key):
-            identity = await self._identity_manager.resolve(cookie_id, proxy_key)
 
         raw = self._movie_service.db.raw_mysql()
 
@@ -619,11 +698,12 @@ class CrawlerEngine:
                 (review_id,),
             )
             logger.info(f"[review_body_crawl] review_id={review_id} 已存在，跳过爬取")
-            await self._check_and_trigger_ai_summary(movie_id)
+            await self._check_and_trigger_ai_summary(movie_id, data.get("admin_id", 0), task_id or 0)
             return
 
         # ① 爬取长评正文（API JSON 接口，用 ApiFetcher 拉取 dict）
         try:
+            await self._emit_stage(task_str, "📡 正在获取长评正文...")
             async with self._api_sem:
                 api_url = REVIEW_FULL_API.format(review_id=review_id)
                 data_api = await self._api.fetch(api_url)
@@ -651,6 +731,7 @@ class CrawlerEngine:
             parsed["votes"] = str(useful_count)
 
         # ③ 写入 MongoDB + 更新 MySQL 状态（先写 Mongo，成功再改 MySQL）
+        await self._emit_stage(task_str, "💾 正在保存长评正文...")
         saved = await save_reviews(douban_id, [parsed], movie_id=movie_id)
         if saved > 0:
             await raw.execute_update(
@@ -659,7 +740,7 @@ class CrawlerEngine:
             )
             logger.info(f"[review_body_crawl] task={task_id} review_id={review_id} 完成")
             # ④ 检查是否触发 AI 总结
-            await self._check_and_trigger_ai_summary(movie_id)
+            await self._check_and_trigger_ai_summary(movie_id, data.get("admin_id", 0), task_id or 0)
         else:
             logger.error(f"[review_body_crawl] review_id={review_id} MongoDB 写入失败，保持 pending")
             raise RuntimeError(f"长评 MongoDB 写入失败: review_id={review_id}")
@@ -669,6 +750,7 @@ class CrawlerEngine:
         douban_id = data.get("douban_id") or data.get("subject_id", "")
         cookie_id = data.get("cookie_id", "")
         proxy_key = data.get("proxy_key", "")
+        task_str = json.dumps(data, ensure_ascii=False)
 
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法执行 douban_id 查询")
@@ -739,14 +821,15 @@ class CrawlerEngine:
                 page_num + 1, pages, start, page_url,
             )
 
+            await self._emit_stage(task_str, f"📡 正在获取短评 (第{page_num+1}页)...")
             try:
                 html = ""
                 if identity:
-                    html, ok, _ = await self._browser.fetch_page(page_url, identity)
+                    html, ok, _ = await self._browser_fetch_page(page_url, identity)
                     if not ok:
                         raise FetcherError(f"短评列表页请求失败: {page_url}")
                 else:
-                    html = await self._browser.fetch(page_url)
+                    html = await self._browser_fetch(page_url)
                 page_comments = parse_comments(html)
                 new_count = 0
                 for c in page_comments:
@@ -786,6 +869,7 @@ class CrawlerEngine:
                 continue
 
         if all_comments:
+            await self._emit_stage(task_str, f"💾 已入库 {len(all_comments)} 条短评")
             saved = await save_comments(douban_id or "", all_comments, movie_id=movie_id)
             logger.info(
                 f"[短评爬取 入库完成] 解析%s条, MongoDB入库%s条, movie_id=%s",
@@ -795,6 +879,7 @@ class CrawlerEngine:
                 from db.redis import redis_delete
                 await redis_delete(f"wordcloud:movie:{movie_id}")
                 # ZADD ai_wordcloud 任务（正式任务，走任务生命周期）
+                await self._emit_stage(task_str, "📋 已提交词云生成任务")
                 await self._inject_ai_wordcloud(movie_id, parent_task_id=task_id)
                 logger.debug(f"[短评爬取 词云触发] 已清除旧缓存并提交 ai_wordcloud 任务: movie_id={movie_id}")
 
@@ -841,7 +926,7 @@ class CrawlerEngine:
         # 爬取 celebrities 页
         task_str = json.dumps(data, ensure_ascii=False)
         await self._emit_stage(task_str, f"📡 正在请求演职人员页: {celeb_url}")
-        html, ok, _ = await self._browser.fetch_page(celeb_url)
+        html, ok, _ = await self._browser_fetch_page(celeb_url)
         if not ok:
             raise FetcherError(f"演职人员页获取失败: douban_id={douban_id}")
 
@@ -866,53 +951,22 @@ class CrawlerEngine:
         movie_scrape_task 成功后自动创建 director_crawl 子任务。
 
         输入：
-            parent_data: 父任务 JSON dict（含 admin_id）
+            parent_data: 父任务 JSON dict（含 admin_id, douban_id, created_at）
             movie_id:    save_movie_basic 返回的电影 ID
         副作用：
-            ZADD Redis ZSET + INSERT task_history（父任务 admin_id 为子任务归属人）
+            调用 inject_subtask → ZADD Redis + INSERT task_history
         """
-        from utils.snowflake import generate_id
-        import json as _json
+        from crawler.subtask import inject_subtask
 
-        admin_id = parent_data.get("admin_id", 0)
-        douban_id = parent_data.get("douban_id", "")
-        parent_task_id = parent_data.get("id", 0)
-
-        sub_task = {
-            "id": generate_id(),
-            "type": "director_crawl",
-            "douban_id": douban_id,
-            "movie_id": movie_id,
-            "admin_id": admin_id,
-            "parent_task_id": parent_task_id,
-            "created_at": parent_data.get("created_at", 0),
-        }
-        sub_json = _json.dumps(sub_task, ensure_ascii=False)
-
-        # 写入 Redis ZSET（限速队列）
-        from config.puller_config import puller_config
-        await self._movie_service.db.add_delayed_task_with_limit(
-            task_json=sub_json,
-            cooldown_seconds=puller_config.task_cooldown_seconds,
-        )
-
-        # 写入 task_history（归属父任务管理员）
-        try:
-            from services.task_history_service import _get_history_service
-            await _get_history_service().create(
-                task_id=sub_task["id"],
-                admin_id=admin_id,
-                task_type="director_crawl",
-                task_params=sub_task,
-                status="submitted",
-                parent_task_id=parent_task_id,
-            )
-        except Exception:
-            logger.exception("director_crawl 子任务 history 写入失败（不影响主流程）")
-
-        logger.info(
-            f"[电影详情爬取] 自动创建子任务: director_crawl sub_id={sub_task['id']} "
-            f"douban_id={douban_id} movie_id={movie_id} admin_id={admin_id}"
+        await inject_subtask(
+            db=self._movie_service.db,
+            task_type="director_crawl",
+            task_data={
+                "douban_id": parent_data.get("douban_id", ""),
+                "movie_id": movie_id,
+            },
+            admin_id=parent_data.get("admin_id", 0),
+            parent_task_id=parent_data.get("id", 0),
         )
 
     async def _trigger_ai_summary_inline(self, raw, review_svc, movie_id: int) -> None:
@@ -1049,48 +1103,30 @@ class CrawlerEngine:
     async def _inject_ai_wordcloud(self, movie_id: int, parent_task_id: int = 0) -> None:
         """
         comment_crawl 完成后自动提交 ai_wordcloud 任务。
-
-        参照 _check_and_trigger_ai_summary 的 ZADD + task_history 模式。
         """
-        from utils.snowflake import generate_id
-        import json as _json
-        from config.puller_config import puller_config
+        from crawler.subtask import inject_subtask
 
-        wordcloud_task = {
-            "id": generate_id(),
-            "type": "ai_wordcloud",
-            "movie_id": movie_id,
-            "admin_id": 0,
-            "parent_task_id": parent_task_id,
-            "created_at": int(time.time()),
-        }
-        sub_json = _json.dumps(wordcloud_task, ensure_ascii=False)
-
-        await self._movie_service.db.add_delayed_task_with_limit(
-            task_json=sub_json,
-            cooldown_seconds=puller_config.task_cooldown_seconds,
+        await inject_subtask(
+            db=self._movie_service.db,
+            task_type="ai_wordcloud",
+            task_data={"movie_id": movie_id},
+            parent_task_id=parent_task_id,
         )
 
-        try:
-            from services.task_history_service import _get_history_service
-            await _get_history_service().create(
-                task_id=wordcloud_task["id"],
-                admin_id=0,
-                task_type="ai_wordcloud",
-                task_params={"movie_id": movie_id},
-                status="submitted",
-                parent_task_id=parent_task_id,
-            )
-            logger.info("[短评爬取] ai_wordcloud 任务已提交: movie_id=%s parent=%s", movie_id, parent_task_id)
-        except Exception:
-            logger.exception("ai_wordcloud 任务 history 写入失败（不影响主流程）")
-
-    async def _check_and_trigger_ai_summary(self, movie_id: int) -> None:
+    async def _check_and_trigger_ai_summary(
+        self, 
+        movie_id: int, 
+        admin_id: int = 0, 
+        parent_task_id: int = 0
+    ) -> None:
         """
         检查电影已完成长评数量，达到阈值则触发AI总结任务（幂等，同一电影只触发一次）。
         v3: 阈值从20改为配置项 ai_summary_min_reviews（默认5）。
         
-        输入：movie_id: 本地电影ID
+        输入：
+            movie_id: 本地电影ID
+            admin_id: 归属管理员ID（0=系统）
+            parent_task_id: 父任务ID（0=无父任务）
         副作用：推送ai_review_summary任务到队列，写入task_history
         """
         if self._movie_service is None:
@@ -1099,9 +1135,9 @@ class CrawlerEngine:
         cfg = crawler_config
         raw = self._movie_service.db.raw_mysql()
         try:
-            # 1. 先检查是否已经生成过总结，防止重复触发
+            # 1. 先检查是否已经生成过总结，防止重复触发（只跳过 done，pending/failed 可重来）
             summary_check = await raw.execute_query(
-                "SELECT 1 FROM review_summary WHERE movie_id=%s LIMIT 1",
+                "SELECT 1 FROM review_summary WHERE movie_id=%s AND status='done' LIMIT 1",
                 (movie_id,),
             )
             if summary_check and len(summary_check) > 0:
@@ -1119,39 +1155,15 @@ class CrawlerEngine:
             
             # 3. 达到阈值则推送任务
             if done_count >= cfg.ai_summary_min_reviews:
-                from utils.snowflake import generate_id
-                import json as _json
-                from config.puller_config import puller_config
-                
-                summary_task = {
-                    "id": generate_id(),
-                    "type": "ai_review_summary",
-                    "movie_id": movie_id,
-                    "admin_id": 0,
-                    "created_at": int(time.time()),
-                }
-                sub_json = _json.dumps(summary_task, ensure_ascii=False)
+                from crawler.subtask import inject_subtask
 
-                # 写入 Redis ZSET（限速队列）
-                await self._movie_service.db.add_delayed_task_with_limit(
-                    task_json=sub_json,
-                    cooldown_seconds=puller_config.task_cooldown_seconds,
+                await inject_subtask(
+                    db=self._movie_service.db,
+                    task_type="ai_review_summary",
+                    task_data={"movie_id": movie_id},
+                    admin_id=admin_id,
+                    parent_task_id=parent_task_id,
                 )
-
-                # 写入 task_history
-                try:
-                    from services.task_history_service import _get_history_service
-                    await _get_history_service().create(
-                        task_id=summary_task["id"],
-                        admin_id=0,
-                        task_type="ai_review_summary",
-                        task_params=summary_task,
-                        status="submitted",
-                    )
-                except Exception:
-                    logger.exception("AI总结任务 history 写入失败（不影响主流程）")
-
-                logger.info(f"[AI总结] movie_id={movie_id} 已达20条长评，总结任务已推送 task_id={summary_task['id']}")
         
         except Exception as e:
             logger.error(f"[AI总结] 检查触发逻辑异常: {e}", exc_info=True)
@@ -1168,6 +1180,8 @@ class CrawlerEngine:
         
         logger.info(f"[AI总结] 开始处理 task_id={task_id}, movie_id={movie_id}")
         
+        task_str = json.dumps(data, ensure_ascii=False)
+
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法访问数据库")
         
@@ -1175,10 +1189,12 @@ class CrawlerEngine:
         from services.review_service import _get_review_service
         review_svc = _get_review_service()
         
+        cfg = crawler_config
+
         try:
-            # 1. 幂等检查：已生成过则直接返回
+            # 1. 幂等检查：已成功生成过则跳过（pending/failed 可重来）
             existing = await raw.execute_query(
-                "SELECT id FROM review_summary WHERE movie_id=%s LIMIT 1",
+                "SELECT id FROM review_summary WHERE movie_id=%s AND status='done' LIMIT 1",
                 (movie_id,),
             )
             if existing and len(existing) > 0:
@@ -1194,10 +1210,10 @@ class CrawlerEngine:
             )
             
             # 3. 拉取该电影最高赞的20条长评全文
+            await self._emit_stage(task_str, "📡 正在拉取长评数据...")
             reviews = await review_svc.get_top_reviews_by_movie_id(movie_id, limit=20)
-            if not reviews or len(reviews) < 10:
-                # 长评数量不足10条，暂时不生成，标记为pending，可后续手动触发
-                logger.warning(f"[AI总结] movie_id={movie_id} 有效长评数量不足10条，暂不生成")
+            if not reviews or len(reviews) < cfg.ai_summary_min_reviews:
+                logger.warning(f"[AI总结] movie_id={movie_id} 有效长评数量不足{cfg.ai_summary_min_reviews}条，暂不生成")
                 await raw.execute_update(
                     "UPDATE review_summary SET status='pending' WHERE movie_id=%s",
                     (movie_id,),
@@ -1208,6 +1224,7 @@ class CrawlerEngine:
             
             # 4. 调用AI生成总结
             from utils.ai_client import get_ai_client
+            await self._emit_stage(task_str, "🤖 正在调用 AI 生成总结...")
             ai_client = get_ai_client()
             result = await ai_client.generate_review_summary(reviews)
             
@@ -1229,6 +1246,7 @@ class CrawlerEngine:
             full_summary = result.get("full_summary", "")
             tags = json.dumps(result.get("tags", []), ensure_ascii=False)
             
+            await self._emit_stage(task_str, "💾 正在保存 AI 总结...")
             await raw.execute_update(
                 "UPDATE review_summary "
                 "SET full_summary=%s, review_tags=%s, status='done', updated_at=NOW() "
@@ -1264,18 +1282,22 @@ class CrawlerEngine:
 
         logger.info(f"[AI词云] 开始处理 task_id=%s movie_id=%s", task_id, movie_id)
 
+        task_str = json.dumps(data, ensure_ascii=False)
+
         try:
             from services.review_service import _get_review_service
             from utils.ai_client import get_ai_client
             from db.redis import redis_set
 
             review_svc = _get_review_service()
+            await self._emit_stage(task_str, "📡 正在拉取短评数据...")
             comments = await review_svc.get_comments_text_by_movie_id(movie_id, limit=100)
             if len(comments) < 10:
                 logger.info("[AI词云] movie_id=%s 短评不足 10 条，跳过", movie_id)
                 return
 
             ai_client = get_ai_client()
+            await self._emit_stage(task_str, "🤖 正在调用 AI 生成词云...")
             words = await ai_client.generate_comment_wordcloud(comments)
             if not words:
                 sn = getattr(ai_client, 'last_snapshot', {}) or {}
@@ -1293,6 +1315,7 @@ class CrawlerEngine:
                 "total_words": len(words),
                 "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
+            await self._emit_stage(task_str, "💾 正在缓存词云...")
             await redis_set(
                 f"wordcloud:movie:{movie_id}",
                 _json.dumps(data_wc, ensure_ascii=False),

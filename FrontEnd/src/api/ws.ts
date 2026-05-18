@@ -29,6 +29,8 @@ class WsManager {
   private _pingTimer: ReturnType<typeof setInterval> | null = null
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _handlers: Record<string, MessageHandler[]> = {}
+  private _token: string | null = null
+  private _suppressErrors: boolean = false
 
   get status(): string { return this._state.status }
   get retryCount(): number { return this._state.retryCount }
@@ -44,6 +46,8 @@ class WsManager {
 
   /** 建立连接 */
   connect(token: string): void {
+    this._token = token
+    
     if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
       return
     }
@@ -58,39 +62,49 @@ class WsManager {
       this._ws = new WebSocket(url)
     } catch {
       this._state.status = 'disconnected'
-      this._scheduleReconnect(token)
+      this._scheduleReconnect()
       return
     }
 
     this._ws.addEventListener('open', () => {
+      console.log('[WS] Connected successfully')
       this._state.status = 'connected'
       this._state.retryCount = 0
+      this._suppressErrors = false
       this._startPing()
     })
 
     this._ws.addEventListener('message', (evt) => {
       try {
+        if (evt.data === 'pong') return
+        
         const msg = JSON.parse(evt.data)
-        if (msg === 'pong') return
+        console.log('[WS] Received message:', msg)
         if (msg.type && this._handlers[msg.type]) {
           this._handlers[msg.type].forEach(h => h(msg))
         }
-      } catch { /* ignore malformed messages */ }
+      } catch (e) {
+        console.error('[WS] Failed to parse message:', evt.data, e)
+      }
     })
 
     this._ws.addEventListener('close', () => {
       this._state.status = 'disconnected'
       this._stopPing()
-      this._scheduleReconnect(token)
+      this._scheduleReconnect()
     })
 
-    this._ws.addEventListener('error', () => {
+    this._ws.addEventListener('error', (evt) => {
+      // 抑制错误日志，避免控制台刷屏
+      evt.stopPropagation()
+      evt.preventDefault()
       // close 事件会紧随 error 触发，不在此处理
     })
   }
 
   /** 断开连接 */
   disconnect(): void {
+    this._token = null
     this._cleanup()
     this._state.status = 'disconnected'
   }
@@ -111,13 +125,16 @@ class WsManager {
     }
   }
 
-  private _scheduleReconnect(token: string): void {
+  private _scheduleReconnect(): void {
+    if (!this._token) return
     if (this._reconnectTimer) return
     const delay = Math.min(1000 * Math.pow(2, this._state.retryCount), 30_000)
     this._state.retryCount++
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null
-      this.connect(token)
+      if (this._token) {
+        this.connect(this._token)
+      }
     }, delay)
   }
 

@@ -144,7 +144,32 @@
               {{ formatRating(review.rating) }}
             </span>
           </div>
-          <p class="review-card-content">{{ review.content || review.text }}</p>
+          <div class="review-card-content-wrapper">
+            <div
+              v-if="!review.expanded && (review.content || review.text) && (review.content || review.text)?.length > 200"
+              class="review-card-content-preview"
+            >
+              {{ (review.content || review.text)?.slice(0, 200) }}...
+            </div>
+            <div
+              v-else-if="review.expanded"
+              class="review-card-content-full"
+              v-html="formatContent(review.content || review.text || '')"
+            ></div>
+            <p
+              v-else
+              class="review-card-content"
+            >{{ review.content || review.text || '' }}</p>
+            <el-button
+              v-if="(review.content || review.text) && (review.content || review.text)?.length > 200"
+              type="primary"
+              link
+              size="small"
+              @click="toggleReviewExpand(review)"
+            >
+              {{ review.expanded ? '收起' : '展开全文' }}
+            </el-button>
+          </div>
         </div>
         <div v-if="!reviewList.length && !reviewLoading" class="empty-tab">
           暂无内容
@@ -174,8 +199,32 @@
               {{ formatRating(comment.rating) }}
             </span>
           </div>
-          <p class="comment-card-content" v-html="highlightKeyword(comment.content || comment.text, filterKeyword)">
-          </p>
+          <div class="comment-card-content-wrapper">
+            <div
+              v-if="!comment.expanded && (comment.content || comment.text) && (comment.content || comment.text)?.length > 150"
+              class="comment-card-content-preview"
+              v-html="highlightKeyword((comment.content || comment.text)?.slice(0, 150) + '...', filterKeyword)"
+            ></div>
+            <div
+              v-else-if="comment.expanded"
+              class="comment-card-content-full"
+              v-html="highlightKeyword(formatContent(comment.content || comment.text || ''), filterKeyword)"
+            ></div>
+            <p
+              v-else
+              class="comment-card-content"
+              v-html="highlightKeyword(comment.content || comment.text || '', filterKeyword)"
+            ></p>
+            <el-button
+              v-if="(comment.content || comment.text) && (comment.content || comment.text)?.length > 150"
+              type="primary"
+              link
+              size="small"
+              @click="toggleCommentExpand(comment)"
+            >
+              {{ comment.expanded ? '收起' : '展开全文' }}
+            </el-button>
+          </div>
         </div>
         <div v-if="!filteredCommentList.length && !commentLoading" class="empty-tab">
           {{ filterKeyword ? '没有找到包含该关键词的短评' : '暂无内容' }}
@@ -221,13 +270,13 @@ function cleanUrl(url: string): string {
 const loading = ref(false)
 const error = ref('')
 
-const reviewList = ref<Review[]>([])
+const reviewList = ref<(Review & { expanded?: boolean })[]>([])
 const reviewPage = ref(1)
 const reviewTotal = ref(0)
 const reviewPageSize = ref(10)
 const reviewLoading = ref(false)
 
-const commentList = ref<Comment[]>([])
+const commentList = ref<(Comment & { expanded?: boolean })[]>([])
 const commentPage = ref(1)
 const commentTotal = ref(0)
 const commentPageSize = ref(10)
@@ -305,12 +354,26 @@ function clearFilter(): void {
   filterKeyword.value = ''
 }
 
+function formatContent(content: string | undefined): string {
+  if (!content) return ''
+  // 将换行符转换为 <br> 标签，保留段落格式
+  return content.replace(/\n/g, '<br>')
+}
+
 function highlightKeyword(content: string | undefined, keyword: string): string {
   if (!content || !keyword) return content || ''
   // 转义正则特殊字符
   const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const reg = new RegExp(`(${escapedKeyword})`, 'gi')
   return content.replace(reg, '<span class="bg-yellow-200 font-bold">$1</span>')
+}
+
+function toggleReviewExpand(review: { expanded?: boolean }): void {
+  review.expanded = !review.expanded
+}
+
+function toggleCommentExpand(comment: { expanded?: boolean }): void {
+  comment.expanded = !comment.expanded
 }
 
 async function fetchReviews(p = 1): Promise<void> {
@@ -587,6 +650,33 @@ onMounted(async () => {
   color: #e8a838;
   font-size: 14px;
   font-weight: 500;
+}
+
+.review-card-content-wrapper,
+.comment-card-content-wrapper {
+  margin-top: 4px;
+}
+
+.review-card-content-preview,
+.comment-card-content-preview {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #555;
+}
+
+.review-card-content-full,
+.comment-card-content-full {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #555;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
 }
 
 .review-card-content,

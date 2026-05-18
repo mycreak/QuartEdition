@@ -192,11 +192,12 @@ async function acquire(row: DoubanId) {
   } catch { return }
   try {
     await adminDoubanIdsApi.acquire(row.douban_id)
-    row.is_acquired = 1
+    // 认领成功后刷新列表获取完整数据
+    await fetchList(page.value)
     ElMessage.success(`已认领 ${row.douban_id}`)
   } catch (e: any) {
     if (e?.response?.status === 409) {
-      row.is_acquired = 1
+      await fetchList(page.value)
       ElMessage.warning('已被别人认领')
     } else {
       ElMessage.error(e?.response?.data?.error || '认领失败')

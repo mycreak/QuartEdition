@@ -1,12 +1,12 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="选择电影"
+    :title="scene === 'review_body' ? '选择电影（仅显示有待爬长评的电影）' : '选择电影'"
     width="800px"
     @close="handleClose"
   >
-    <!-- 筛选栏 - 已优化间距和布局 -->
-    <div class="cus_space-between">
+    <!-- 筛选栏 - 非 review_body 场景才显示全量筛选 -->
+    <div v-if="scene !== 'review_body'" class="cus_space-between">
       <!-- 左边：所有筛选控件 - 间距从12px提升到16px，更宽松 -->
       <div class="flex flex-wrap items-center gap-4">
         <el-input
@@ -76,8 +76,9 @@
       </div>
     </div>
 
-    <!-- 电影列表 -->
+    <!-- 电影列表 - review_body 场景：简化的待爬列表 -->
     <el-table
+      v-if="scene !== 'review_body' || movieList.length > 0"
       :data="movieList"
       v-loading="loading"
       @row-click="handleRowClick"
@@ -85,29 +86,51 @@
       height="400px"
       highlight-current-row
     >
-      <el-table-column prop="title" label="电影名" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="douban_id" label="豆瓣ID" width="120" />
-      <el-table-column label="类型" min-width="120">
-        <template #default="{ row }">
-          <el-tag size="small" v-for="g in row.genres" :key="g" class="mr-1">
-            {{ TYPE_MAP[Number(g)] || g }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="地区" min-width="100">
-        <template #default="{ row }">
-          <el-tag size="small" v-for="r in row.regions" :key="r.id" class="mr-1">
-            {{ r.name }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="release_year" label="年份" width="80" />
-      <el-table-column label="评分" width="80">
-        <template #default="{ row }">
-          <span class="rating-text">{{ row.rating?.average ?? '—' }}</span>
-        </template>
-      </el-table-column>
+      <template v-if="scene === 'review_body'">
+        <el-table-column prop="title" label="电影名" min-width="280" show-overflow-tooltip />
+        <el-table-column prop="douban_id" label="豆瓣ID" width="140" />
+        <el-table-column prop="pending_count" label="待爬数量" width="100">
+          <template #default="{ row }">
+            <el-tag type="warning" size="small">{{ row.pending_count }} 条</el-tag>
+          </template>
+        </el-table-column>
+      </template>
+      <template v-else>
+        <el-table-column prop="title" label="电影名" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="douban_id" label="豆瓣ID" width="120" />
+        <el-table-column label="类型" min-width="120">
+          <template #default="{ row }">
+            <el-tag size="small" v-for="g in row.genres" :key="g" class="mr-1">
+              {{ TYPE_MAP[Number(g)] || g }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="地区" min-width="100">
+          <template #default="{ row }">
+            <el-tag size="small" v-for="r in row.regions" :key="r.id" class="mr-1">
+              {{ r.name }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="release_year" label="年份" width="80" />
+        <el-table-column label="评分" width="80">
+          <template #default="{ row }">
+            <span class="rating-text">{{ row.rating?.average ?? '—' }}</span>
+          </template>
+        </el-table-column>
+      </template>
     </el-table>
+
+    <!-- review_body 场景：无待爬长评的空状态 -->
+    <div v-if="scene === 'review_body' && !loading && movieList.length === 0" class="empty-hint">
+      <el-empty description="暂无可爬取长评正文的电影">
+        <template #extra>
+          <p style="color: #909399; font-size: 13px;">
+            请先提交「采集长评摘要」任务，获取长评ID后再来爬取正文
+          </p>
+        </template>
+      </el-empty>
+    </div>
 
     <!-- 分页 -->
     <div class="pagination-bar mt-4 flex justify-end">
@@ -133,19 +156,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { adminMoviesApi } from '@/api/admin/movies'
 import client from '@/api/client'
 import type { Movie } from '@/types/movie'
 
 const props = defineProps<{
   modelValue: boolean
+  scene?: 'review' | 'comment' | 'review_body'
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'select', movie: Movie): void
 }>()
+
+const scene = computed(() => props.scene || 'review')
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作',
@@ -189,20 +215,32 @@ async function fetchAllRegions() {
 async function fetchMovies(page = 1) {
   loading.value = true
   try {
-    const params = {
-      page,
-      page_size: pageSize.value,
-      keyword: filters.value.keyword || undefined,
-      type_num: filters.value.type_num,
-      release_year: filters.value.release_year,
-      region_id: filters.value.region_id,
-      interval_ids: filters.value.interval_ids || undefined,
-      published: 1
+    if (scene.value === 'review_body') {
+      const res = await adminMoviesApi.getMoviesWithPendingReviews()
+      movieList.value = (res.data.items || []).map(item => ({
+        id: item.movie_id,
+        douban_id: item.douban_id,
+        title: item.title,
+        pending_count: item.pending_count,
+      } as any))
+      total.value = movieList.value.length
+      currentPage.value = 1
+    } else {
+      const params = {
+        page,
+        page_size: pageSize.value,
+        keyword: filters.value.keyword || undefined,
+        type_num: filters.value.type_num,
+        release_year: filters.value.release_year,
+        region_id: filters.value.region_id,
+        interval_ids: filters.value.interval_ids || undefined,
+        published: 1
+      }
+      const res = await adminMoviesApi.list(params)
+      movieList.value = res.data.items
+      total.value = res.data.total
+      currentPage.value = page
     }
-    const res = await adminMoviesApi.list(params)
-    movieList.value = res.data.items
-    total.value = res.data.total
-    currentPage.value = page
   } finally {
     loading.value = false
   }
