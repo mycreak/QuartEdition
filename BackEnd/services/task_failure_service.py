@@ -1,17 +1,17 @@
 """
 services/task_failure_service.py
 
-失败任务管理业务层。
+失败任务管理 — 只读查询 + 写入。
 
 职责：
     1. list_task_failures — 分页查询失败任务列表（支持按 status 过滤）
-    2. claim_failure      — 原子认领（WHERE status='pending' 防并发抢）
-    3. release_failure    — 放弃认领（status → pending）
-    4. resolve_failure    — 标记已解决（status → resolved）
-    5. write_batch_failure — 写入批次级失败事件
-    6. write_item_failure  — 写入 item 级失败事件
+    2. get_failure        — 单条详情
+    3. write_batch_failure — 写入批次级失败事件
+    4. write_item_failure  — 写入 item 级失败事件
 
-注意：不再提供任务级重爬 — 失败后由管理员人工排查，保护 IP 资源。
+注意：不再提供 claim/release/resolve。
+失败任务天然归属提交者（admin_id），管理员通过 WebSocket 收到通知后，
+可在爬虫面板的「历史」tab 中按状态过滤查看，自行决定重新提交。
 
 错误处理：
     所有失败路径抛出 ServiceError 子类，路由层统一捕获。
@@ -27,7 +27,7 @@ from typing import Optional, List, Dict, Any
 from db.database_v2 import DatabaseLayerV2
 from utils.serializers import serialize_datetime_fields
 from utils.errors import (
-    ServiceError, NotFoundError, ClaimConflictError, ClaimNotYoursError,
+    ServiceError, NotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,79 +95,6 @@ class TaskFailureService:
         if not rows:
             raise NotFoundError("失败记录", failure_id)
         return self._serialize_row(rows[0])
-
-    # ═══════════════════════════════════════
-    # 认领 / 释放 / 解决
-    # ═══════════════════════════════════════
-
-    async def claim_failure(self, failure_id: int, admin_id: int) -> bool:
-        """
-        原子认领失败任务。
-
-        输入：failure_id, admin_id
-        输出：True
-        异常：ClaimConflictError — 已被别人抢走或不存在
-        """
-        sql = (
-            "UPDATE task_failures "
-            "SET status = 'claimed', claimed_by = %s, claimed_at = NOW() "
-            "WHERE id = %s AND status = 'pending'"
-        )
-        affected = await self._execute_update(sql, (admin_id, failure_id))
-        if affected > 0:
-            logger.info(f"失败任务认领成功: id={failure_id} admin_id={admin_id}")
-            return True
-
-        # 查询原因：是自己认领的 → 幂等成功，否则抛异常
-        try:
-            row = await self.get_failure(failure_id)
-        except NotFoundError:
-            raise ClaimConflictError()
-
-        if row["status"] == "claimed" and row["claimed_by"] == admin_id:
-            return True
-
-        raise ClaimConflictError()
-
-    async def release_failure(self, failure_id: int, admin_id: int) -> bool:
-        """
-        放弃认领。
-
-        输入：failure_id, admin_id
-        输出：True
-        异常：ClaimNotYoursError — 不是你认领的或不存在
-        """
-        sql = (
-            "UPDATE task_failures "
-            "SET status = 'pending', claimed_by = 0, claimed_at = NULL "
-            "WHERE id = %s AND claimed_by = %s AND status = 'claimed'"
-        )
-        affected = await self._execute_update(sql, (failure_id, admin_id))
-        if affected > 0:
-            logger.info(f"失败任务已释放: id={failure_id} admin_id={admin_id}")
-            return True
-
-        raise ClaimNotYoursError("放弃认领")
-
-    async def resolve_failure(self, failure_id: int, admin_id: int) -> bool:
-        """
-        标记失败任务已解决。
-
-        输入：failure_id, admin_id
-        输出：True
-        异常：ClaimNotYoursError — 不是你认领的或不存在
-        """
-        sql = (
-            "UPDATE task_failures "
-            "SET status = 'resolved', resolved_at = NOW() "
-            "WHERE id = %s AND claimed_by = %s"
-        )
-        affected = await self._execute_update(sql, (failure_id, admin_id))
-        if affected > 0:
-            logger.info(f"失败任务已解决: id={failure_id} admin_id={admin_id}")
-            return True
-
-        raise ClaimNotYoursError("解决")
 
     # ═══════════════════════════════════════
     # 写入失败事件

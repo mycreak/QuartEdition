@@ -43,10 +43,6 @@
           <template #title>爬虫面板</template>
         </el-menu-item>
 
-        <el-menu-item index="/admin/failures" v-if="authStore.checkPermission('crawler:failure:manage')">
-          <el-icon><WarningFilled /></el-icon>
-          <template #title>失败任务</template>
-        </el-menu-item>
 
         <el-menu-item index="/admin/douban-ids" v-if="authStore.checkPermission('crawler:task:read')">
           <el-icon><Collection /></el-icon>
@@ -77,7 +73,7 @@
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Monitor, VideoCamera, ChatLineRound, SetUp, WarningFilled, Collection, User, Tools, Fold, Expand, ArrowLeft } from '@element-plus/icons-vue'
+import { Monitor, VideoCamera, ChatLineRound, SetUp, Collection, User, Tools, Fold, Expand, ArrowLeft } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -90,7 +86,6 @@ const activeMenu = computed(() => {
   if (p.startsWith('/admin/movies')) return '/admin/movies'
   if (p.startsWith('/admin/reviews')) return '/admin/reviews'
   if (p.startsWith('/admin/crawler')) return '/admin/crawler'
-  if (p.startsWith('/admin/failures')) return '/admin/failures'
   if (p.startsWith('/admin/douban-ids')) return '/admin/douban-ids'
   if (p.startsWith('/admin/users')) return '/admin/users'
   if (p.startsWith('/admin/infra')) return '/admin/infra'

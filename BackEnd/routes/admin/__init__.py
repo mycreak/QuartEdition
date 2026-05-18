@@ -8,13 +8,9 @@ routes/admin/__init__.py
 子模块一览（按职责）：
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-failure_routes.py — 失败任务认领管理
+failure_routes.py — 失败任务查询（只读）
     GET    /admin/failures             失败列表（分页，按 status 过滤）   [crawler:failure:manage]
     GET    /admin/failures/<id>        单条详情                          [crawler:failure:manage]
-    POST   /admin/failures/<id>/claim  认领（原子，先到先得）            [crawler:failure:manage]
-    POST   /admin/failures/<id>/release 放弃认领                        [crawler:failure:manage]
-    POST   /admin/failures/<id>/resolve 标记已解决                      [crawler:failure:manage]
-    POST   /admin/failures/<id>/retry  重爬 → Redis ZSET               [crawler:failure:manage]
     依赖: TaskFailureService
 
 task_routes.py — 爬虫任务提交与进度

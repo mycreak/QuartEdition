@@ -28,7 +28,6 @@ export function setupGuards(router: Router): void {
           { path: '/admin/movies', permission: 'movie:read' },
           { path: '/admin/reviews', permission: 'comment:read' },
           { path: '/admin/crawler', permission: 'crawler:task:write' },
-          { path: '/admin/failures', permission: 'crawler:failure:manage' },
           { path: '/admin/douban-ids', permission: 'crawler:task:read' },
           { path: '/admin/users', permission: 'user:manage' },
           { path: '/admin/infra', permission: 'system:monitor' },

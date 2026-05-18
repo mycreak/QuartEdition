@@ -55,12 +55,6 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, permission: 'crawler:task:write' },
       },
       {
-        path: 'failures',
-        name: 'AdminFailures',
-        component: () => import('@/views/admin/FailuresView.vue'),
-        meta: { requiresAuth: true, permission: 'crawler:failure:manage' },
-      },
-      {
         path: 'movies',
         name: 'AdminMovies',
         component: () => import('@/views/admin/MoviesView.vue'),
