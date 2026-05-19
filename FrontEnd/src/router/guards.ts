@@ -32,7 +32,7 @@ export function setupGuards(router: Router): void {
           { path: '/admin/douban-ids', permission: 'crawler:task:read' },
           { path: '/admin/users', permission: 'user:manage' },
           { path: '/admin/infra', permission: 'system:monitor' },
-        ]
+        ] as const
 
         for (const page of pages) {
           if (authStore.checkPermission(page.permission)) {
