@@ -1,8 +1,8 @@
 <template>
   <div v-loading="loading" class="admin-movie-detail">
     <div class="detail-nav">
-      <el-button text @click="handleBack">← {{ fromPlaylistEdit ? '返回片单编辑' : '返回电影列表'}}</el-button>
-      <el-button text @click="$router.push(`/movies/${movieId}`)" v-if="detail && detail.movie.is_published">查看用户端 →</el-button>
+      <el-button text @click="handleBack">← {{ backLabel }}</el-button>
+      <el-button text @click="$router.push(`/movies/${movieId}?from=admin`)" v-if="detail && detail.movie.is_published">查看用户端 →</el-button>
     </div>
 
     <ErrorAlert :message="error" @close="error = ''" />
@@ -339,15 +339,26 @@ const authStore = useAuthStore()
 
 // 判断是否从片单编辑页面来
 const fromPlaylistEdit = computed(() => route.query.from === 'playlist-edit')
+// 判断是否从爬虫面板来
+const fromCrawler = computed(() => route.query.from === 'crawler')
 
 // 返回处理
-const handleBack = () => {
+function handleBack() {
   if (fromPlaylistEdit.value) {
+    router.back()
+  } else if (fromCrawler.value) {
     router.back()
   } else {
     router.push('/admin/movies')
   }
 }
+
+// 返回按钮文字
+const backLabel = computed(() => {
+  if (fromPlaylistEdit.value) return '返回片单编辑'
+  if (fromCrawler.value) return '返回爬虫面板'
+  return '返回电影列表'
+})
 
 // 过滤已经关联的类型，避免重复添加
 const filteredTypeOptions = computed(() => {

@@ -160,18 +160,6 @@ async def _find_or_create_person(db_layer, name: str, douban_id: str = "") -> Op
         f"创建人员 '{name}'",
         db_layer.insert("people", {"name": name, "douban_id": douban_id or None})
     )
-    if pid:
-        # 写入版本记录（创建 = 变更的一种形式）
-        try:
-            await db_layer.insert("people_history", {
-                "person_id": pid,
-                "douban_id": douban_id or None,
-                "name": name,
-                "change_type": "create",
-                "changed_by": "system",
-            })
-        except Exception:
-            pass
     return pid
 
 
@@ -327,7 +315,7 @@ async def _save_single_movie(movie_service, data: Dict[str, Any]) -> Optional[in
 
     # 事务内：movies + 演职人员 + 类型 + 地区 + 评分 原子执行
     async with db_layer.transaction() as tx:
-        # 1. movies 主表 + movies_history
+        # 1. movies 主表
         values = {
             "douban_id": douban_id,
             "title": title,
@@ -339,17 +327,6 @@ async def _save_single_movie(movie_service, data: Dict[str, Any]) -> Optional[in
             "imdb_id": None,
         }
         movie_id = await tx.insert("movies", values, return_id=True)
-        await tx.insert("movies_history", {
-            "movie_id": movie_id,
-            "title": title,
-            "original_title": data.get("original_title") or "",
-            "release_year": data.get("release_year") or None,
-            "release_date": str(release_date) if release_date else "",
-            "duration": data.get("duration") or None,
-            "poster_url": poster_url,
-            "change_type": "create",
-            "changed_by": "system",
-        }, return_id=False)
 
         # 2. 演职人员 + people（幂等）
         crew_list: list[dict] = data.get("crew", [])
@@ -435,8 +412,7 @@ async def save_movie_basic(movie_service, data: Dict[str, Any]) -> Optional[int]
     输出：
         movie_id 或 None（已存在则跳过）
     副作用：
-        INSERT movies / movie_genres / movie_genres_history /
-        INSERT regions / movie_regions / movie_regions_history / movie_ratings（同一事务）
+        INSERT movies / movie_genres / regions / movie_regions / movie_ratings（同一事务）
     """
     douban_id = data.get("douban_id", "")
     title = data.get("title", "")
@@ -485,20 +461,13 @@ async def save_movie_basic(movie_service, data: Dict[str, Any]) -> Optional[int]
         }
         movie_id = await tx.insert("movies", values, return_id=True)
 
-        # 2. movie_genres + movie_genres_history（类型关联，含历史记录）
+        # 2. movie_genres（类型关联）
         for genre_name in genre_names:
             tn = await _resolve_type_num_in_tx(tx, genre_name)
             if tn:
                 await tx.insert("movie_genres", {
                     "movie_id": movie_id, "type_num": tn,
                 }, return_id=False)
-                try:
-                    await tx.insert("movie_genres_history", {
-                        "movie_id": movie_id, "type_num": tn,
-                        "change_type": "create", "changed_by": "system",
-                    }, return_id=False)
-                except Exception:
-                    pass
                 genre_written += 1
             else:
                 logger.warning(
@@ -506,20 +475,13 @@ async def save_movie_basic(movie_service, data: Dict[str, Any]) -> Optional[int]
                     f"genre='{genre_name}' douban_id={douban_id}"
                 )
 
-        # 3. regions + movie_regions + movie_regions_history（地区关联/创建 + 历史记录）
+        # 3. regions + movie_regions（地区关联/创建）
         for region_name in region_names:
             rid = await _find_or_create_region_in_tx(tx, region_name)
             if rid:
                 await tx.insert("movie_regions", {
                     "movie_id": movie_id, "region_id": rid,
                 }, return_id=False)
-                try:
-                    await tx.insert("movie_regions_history", {
-                        "movie_id": movie_id, "region_id": rid,
-                        "change_type": "create", "changed_by": "system",
-                    }, return_id=False)
-                except Exception:
-                    pass
                 region_written += 1
 
         # 4. movie_ratings（幂等 — 首次写入）

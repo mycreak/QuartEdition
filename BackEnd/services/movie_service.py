@@ -9,13 +9,6 @@ services/movie_service.py
     2. 编排多表复合查询（get_movie_detail 等）
     3. 输入校验（Pydantic 模型）→ 数据转换（json.dumps 等）→ 调用 db 层
     4. 返回 Pydantic Read 模型，调用方不需要关心数据库字段
-    5. 所有写操作同步写入 {table}_history 版本表
-
-版本记录规则：
-    - create → INSERT _history（变更后的完整快照 + change_type='create'）
-    - update → INSERT _history（变更后的完整快照 + change_type='update'）
-    - delete → INSERT _history（删除前的完整快照 + change_type='delete'）
-    - ratings 不记录版本（统计数据，非"纠错"场景）
 
 每一行注释标注："输入、输出、副作用"
 """
@@ -32,7 +25,6 @@ from models.movie_models import (
     RatingRead, RatingCreate,
     CreditRead, MovieDetail, GenreStat,
 )
-from utils.serializers import to_iso
 from utils.errors import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -43,58 +35,18 @@ class MovieService:
     电影业务层
 
     输入：DatabaseLayerV2 实例（依赖注入，解耦具体数据库）
-    副作用：读写 MySQL movie_db + 版本历史表（事务内）
+    副作用：读写 MySQL movie_db
 
     V2 事务策略：
         - create_movie / update_movie / delete_movie / set_movie_published
-          → transaction() 内执行：主表写入 + history 写入（原子）
+          → transaction() 内执行（原子）
         - add_credit / remove_credit / add_genre / remove_genre / add_region / remove_region
-          → transaction() 内执行：关联写入 + history 写入（原子）
+          → transaction() 内执行（原子）
         - set_rating → 不用事务（ON DUPLICATE KEY UPDATE 本身幂等）
     """
 
     def __init__(self, db: DatabaseLayerV2):
         self.db = db
-
-    # ==================== 版本历史写入 ====================
-
-    async def _write_history(
-        self,
-        table: str,
-        entity_pk: dict,
-        snapshot: dict,
-        change_type: str,
-        changed_by: str = "",
-        tx=None,
-    ):
-        """
-        写入版本历史记录（内部方法）。
-
-        输入：
-            table:       原表名（"movies" / "movie_credits" / ...）
-            entity_pk:   原表主键映射（如 {"movie_id": 5}）
-            snapshot:    变更后的全量字段快照
-            change_type: "create" / "update" / "delete"
-            changed_by:  操作人标识（管理员ID 或 "system"）
-            tx:          事务上下文（传入 TransactionContext 时走事务内，
-                         不传时退化为独立连接写入）
-        副作用：INSERT INTO {table}_history
-        """
-        clean = {}
-        for k, v in snapshot.items():
-            if k == "id":
-                continue
-            clean[k] = to_iso(v)
-
-        doc = {**entity_pk, **clean, "change_type": change_type, "changed_by": changed_by}
-        history_table = f"{table}_history"
-        try:
-            if tx is not None:
-                await tx.insert(history_table, doc, return_id=False)
-            else:
-                await self.db.insert(history_table, doc)
-        except Exception:
-            logger.exception(f"写入 {history_table} 失败（不影响主操作）")
 
     # ==================== 字典表查询 ====================
 
@@ -158,7 +110,7 @@ class MovieService:
         """
         输入：MovieCreate（不含 id）, changed_by（操作人）
         输出：MovieRead（含 id + 时间戳）
-        副作用：INSERT INTO movies + movies_history（同一事务）
+        副作用：INSERT INTO movies（同一事务）
         """
         values = data.model_dump()
         if values.get("release_date"):
@@ -167,8 +119,6 @@ class MovieService:
         async with self.db.transaction() as tx:
             mid = await tx.insert("movies", values, return_id=True)
             row = await tx.find_one("movies", {"id": mid})
-            if row:
-                await self._write_history("movies", {"movie_id": mid}, row, "create", changed_by, tx=tx)
         return MovieRead(**row) if row else None
 
     async def get_movie(self, movie_id: int) -> Optional[MovieRead]:
@@ -197,7 +147,7 @@ class MovieService:
         """
         输入：movie_id + MovieUpdate（只更新非 None 字段）, changed_by
         输出：更新后的 MovieRead 或 None（不存在）
-        副作用：UPDATE movies SET ... + movies_history
+        副作用：UPDATE movies SET ...（同一事务）
         """
         values = data.model_dump(exclude_none=True)
         if not values:
@@ -211,20 +161,15 @@ class MovieService:
             if affected == 0:
                 return None
             row = await tx.find_one("movies", {"id": movie_id})
-            if row:
-                await self._write_history("movies", {"movie_id": movie_id}, row, "update", changed_by, tx=tx)
             return MovieRead(**row) if row else None
 
     async def delete_movie(self, movie_id: int, changed_by: str = "") -> int:
         """
         输入：movie_id, changed_by
         输出：删除行数（0 或 1）
-        副作用：DELETE FROM movies + movies_history（同一事务：先记历史再删）
+        副作用：DELETE FROM movies（同一事务）
         """
         async with self.db.transaction() as tx:
-            row = await tx.find_one("movies", {"id": movie_id})
-            if row:
-                await self._write_history("movies", {"movie_id": movie_id}, row, "delete", changed_by, tx=tx)
             return await tx.delete("movies", {"id": movie_id})
 
     # ==================== 上下架管理 ====================
@@ -234,7 +179,7 @@ class MovieService:
         输入：movie_id + published + changed_by
         输出：True
         异常：ResourceNotFoundError — 电影不存在
-        副作用：UPDATE movies + movies_history（同一事务）
+        副作用：UPDATE movies（同一事务）
 
         幂等：已上架再上架、已下架再下架 → 返回 True（不报错）。
         """
@@ -244,18 +189,10 @@ class MovieService:
                 {"is_published": 1 if published else 0}
             )
             if not affected:
-                # affected=0 有两种可能：
-                #   ① 电影不存在 → 应报 404
-                #   ② 已是目标状态（已上架再上架） → 幂等成功
                 row = await tx.find_one("movies", {"id": movie_id})
                 if not row:
                     raise ResourceNotFoundError(f"电影不存在: {movie_id}")
-                # 已为目标状态，幂等放行，不写入 history
                 return True
-
-            row = await tx.find_one("movies", {"id": movie_id})
-            if row:
-                await self._write_history("movies", {"movie_id": movie_id}, row, "update", changed_by, tx=tx)
         action = "上架" if published else "下架"
         logger.info(f"电影 {movie_id} 已{action}")
         return True
@@ -482,19 +419,13 @@ class MovieService:
         """
         输入：movie_id + person_id + role_type("director"/"actor"), changed_by, tx可选事务
         输出：插入数量（1）
-        副作用：INSERT INTO movie_credits + movie_credits_history（同一事务）
+        副作用：INSERT INTO movie_credits（同一事务）
         """
         async def _exec(_tx):
             result = await _tx.execute_raw(
                 "INSERT IGNORE INTO `movie_credits` (movie_id, person_id, role_type) "
                 "VALUES (%s, %s, %s)",
                 (movie_id, person_id, role_type),
-            )
-            await self._write_history(
-                "movie_credits",
-                {"movie_id": movie_id, "person_id": person_id},
-                {"role_type": role_type},
-                "create", changed_by, tx=_tx,
             )
             return result
 
@@ -508,15 +439,9 @@ class MovieService:
         """
         输入：movie_id + person_id + role_type, changed_by
         输出：删除行数
-        副作用：DELETE FROM movie_credits + movie_credits_history（同一事务）
+        副作用：DELETE FROM movie_credits（同一事务）
         """
         async with self.db.transaction() as tx:
-            await self._write_history(
-                "movie_credits",
-                {"movie_id": movie_id, "person_id": person_id},
-                {"role_type": role_type},
-                "delete", changed_by, tx=tx,
-            )
             return await tx.delete("movie_credits", {
                 "movie_id": movie_id, "person_id": person_id, "role_type": role_type,
             })
@@ -603,7 +528,7 @@ class MovieService:
         """
         输入：movie_id + type_num（豆瓣类型编号）, changed_by
         输出：插入数量，0表示已存在
-        副作用：INSERT INTO movie_genres + movie_genres_history（同一事务）
+        副作用：INSERT INTO movie_genres（同一事务）
         """
         # 兜底校验：防止重复添加
         exists = await self.db.execute_raw(
@@ -618,25 +543,15 @@ class MovieService:
                 "movie_id": movie_id,
                 "type_num": type_num,
             }, return_id=False)
-            await self._write_history(
-                "movie_genres",
-                {"movie_id": movie_id, "type_num": type_num},
-                {}, "create", changed_by, tx=tx,
-            )
         return result
 
     async def remove_genre_from_movie(self, movie_id: int, type_num: int, changed_by: str = "") -> int:
         """
         输入：movie_id + type_num, changed_by
         输出：删除行数
-        副作用：DELETE FROM movie_genres + movie_genres_history（同一事务）
+        副作用：DELETE FROM movie_genres（同一事务）
         """
         async with self.db.transaction() as tx:
-            await self._write_history(
-                "movie_genres",
-                {"movie_id": movie_id, "type_num": type_num},
-                {}, "delete", changed_by, tx=tx,
-            )
             return await tx.delete("movie_genres", {
                 "movie_id": movie_id, "type_num": type_num,
             })
@@ -647,7 +562,7 @@ class MovieService:
         """
         输入：movie_id + region_id, changed_by
         输出：插入数量，0表示已存在
-        副作用：INSERT INTO movie_regions + movie_regions_history（同一事务）
+        副作用：INSERT INTO movie_regions（同一事务）
         """
         # 兜底校验：防止重复添加
         exists = await self.db.execute_raw(
@@ -662,25 +577,15 @@ class MovieService:
                 "movie_id": movie_id,
                 "region_id": region_id,
             }, return_id=False)
-            await self._write_history(
-                "movie_regions",
-                {"movie_id": movie_id, "region_id": region_id},
-                {}, "create", changed_by, tx=tx,
-            )
         return result
 
     async def remove_region_from_movie(self, movie_id: int, region_id: int, changed_by: str = "") -> int:
         """
         输入：movie_id + region_id, changed_by
         输出：删除行数
-        副作用：DELETE FROM movie_regions + movie_regions_history（同一事务）
+        副作用：DELETE FROM movie_regions（同一事务）
         """
         async with self.db.transaction() as tx:
-            await self._write_history(
-                "movie_regions",
-                {"movie_id": movie_id, "region_id": region_id},
-                {}, "delete", changed_by, tx=tx,
-            )
             return await tx.delete("movie_regions", {
                 "movie_id": movie_id, "region_id": region_id,
             })

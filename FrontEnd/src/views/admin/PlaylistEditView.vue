@@ -210,7 +210,8 @@
     <MovieSelector
       v-model="movieSelectorVisible"
       :excluded-movie-ids="store.movie_ids"
-      :from-playlist-edit="true"
+      :multiple="true"
+      detail-back-to="playlist-edit"
       @select="onMovieSelected"
     />
   </div>

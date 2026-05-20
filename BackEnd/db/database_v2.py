@@ -73,7 +73,6 @@ class TransactionContext:
     使用方式（仅通过 DatabaseLayerV2.transaction() 获取）：
         async with db.transaction() as tx:
             mid = await tx.insert("movies", values, return_id=True)
-            await tx.insert("movies_history", {...})
             # 退出 with 块 → COMMIT（异常 → ROLLBACK）
 
     安全保证：
@@ -208,7 +207,6 @@ class DatabaseLayerV2:
         用法:
             async with self.db.transaction() as tx:
                 mid = await tx.insert("movies", values, return_id=True)
-                await tx.insert("movies_history", {"movie_id": mid, ...})
                 # 正常退出 → COMMIT；异常 → ROLLBACK
 
         TransactionContext 暴露的方法:

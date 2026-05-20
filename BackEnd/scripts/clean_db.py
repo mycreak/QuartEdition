@@ -7,8 +7,7 @@ scripts/clean_db.py
 MySQL 删除顺序（遵守外键依赖）：
     1. movie_ratings
     2. movie_regions / movie_genres / movie_credits
-    3. movies_history / people_history
-    4. movies / people
+    3. movies / people
 
 MongoDB：
     reviews / comments 全量删除
@@ -37,8 +36,6 @@ MYSQL_TABLES_IN_ORDER = [
     "movie_regions",
     "movie_genres",
     "movie_credits",
-    "movies_history",
-    "people_history",
     "movies",
     "people",
     "regions",

@@ -327,6 +327,8 @@
     <MovieSelector
       v-model="movieSelectorVisible"
       :scene="movieSelectScene"
+      :multiple="false"
+      detail-back-to="crawler"
       @select="onMovieSelected($event)"
     />
 
@@ -358,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed, onActivated } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, onActivated, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { wsManager } from '@/api/ws'
@@ -424,6 +426,35 @@ const taskForm = reactive({
   comment_proxy_key: '',
   // 批量长评相关
   selected_movie_id: null as number | null,
+})
+
+const TASK_FORM_SESSION_KEY = 'taskFormState'
+
+// 从 sessionStorage 恢复任务类型
+function restoreTaskType() {
+  try {
+    const saved = sessionStorage.getItem(TASK_FORM_SESSION_KEY)
+    if (saved) {
+      const { type } = JSON.parse(saved)
+      if (type) taskForm.type = type
+    }
+  } catch { /* ignore */ }
+}
+
+// 保存任务类型到 sessionStorage
+function saveTaskType() {
+  try {
+    sessionStorage.setItem(TASK_FORM_SESSION_KEY, JSON.stringify({ type: taskForm.type }))
+  } catch { /* ignore */ }
+}
+
+// 监听任务类型变化，自动保存
+watch(() => taskForm.type, () => {
+  if (taskForm.type) {
+    saveTaskType()
+  } else {
+    sessionStorage.removeItem(TASK_FORM_SESSION_KEY)
+  }
 })
 
 // 电影选择弹窗相关
@@ -1025,6 +1056,7 @@ let unsubTaskProgress: (() => void) | null = null
 let unsubSystemStatus: (() => void) | null = null
 
 onMounted(() => {
+  restoreTaskType()
   fetchQueue()
   fetchProgress()
   fetchHistory()

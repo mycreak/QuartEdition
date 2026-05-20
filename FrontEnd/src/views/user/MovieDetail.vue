@@ -6,6 +6,12 @@
         返回片单
       </el-button>
     </div>
+    <!-- 从管理端进入时显示返回按钮 -->
+    <div v-else-if="fromAdmin" class="back-bar">
+      <el-button :icon="ArrowLeft" @click="router.push('/')" text>
+        返回推荐页
+      </el-button>
+    </div>
     <ErrorAlert :message="error" @close="error = ''" />
 
     <template v-if="detail">
@@ -370,6 +376,9 @@ const store = useMovieStore()
 // 判断是否从片单页进入
 const fromPlaylist = computed(() => route.query.from === 'playlist')
 const playlistId = computed(() => route.query.listId as string)
+
+// 判断是否从管理端进入
+const fromAdmin = computed(() => route.query.from === 'admin')
 
 // 返回片单详情页
 function goBackToPlaylist() {

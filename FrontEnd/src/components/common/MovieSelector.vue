@@ -85,15 +85,18 @@
     <!-- 电影列表 - review_body 场景：简化的待爬列表 -->
     <el-table
       v-if="scene === 'review_body' || filteredMovieList.length > 0"
+      ref="tableRef"
       :data="filteredMovieList"
       v-loading="loading"
       @selection-change="handleSelectionChange"
+      @current-change="handleCurrentChange"
       stripe
       height="400px"
+      :highlight-current-row="!multiple"
       :row-class-name="getRowClassName"
     >
       <template v-if="scene === 'review_body'">
-        <el-table-column type="selection" width="55" />
+        <el-table-column type="selection" width="55" v-if="multiple" />
         <el-table-column prop="title" label="电影名" min-width="280" show-overflow-tooltip />
         <el-table-column prop="douban_id" label="豆瓣ID" width="140" />
         <el-table-column prop="pending_count" label="待爬数量" width="100">
@@ -103,7 +106,7 @@
         </el-table-column>
       </template>
       <template v-else>
-        <el-table-column type="selection" width="55" />
+        <el-table-column type="selection" width="55" v-if="multiple" />
         <el-table-column prop="title" label="电影名" min-width="200" show-overflow-tooltip />
         <el-table-column prop="douban_id" label="豆瓣ID" width="120" />
         <el-table-column label="类型" min-width="120">
@@ -172,8 +175,13 @@
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="handleClose">取消</el-button>
-        <el-button type="primary" @click="handleConfirm" :disabled="selectedMovies.length === 0">
-          确认选择 ({{ selectedMovies.length }})
+        <el-button
+          type="primary"
+          @click="handleConfirm"
+          :disabled="multiple ? selectedMovies.length === 0 : !selectedMovie"
+        >
+          确认选择
+          <template v-if="multiple">({{ selectedMovies.length }})</template>
         </el-button>
       </div>
     </template>
@@ -193,8 +201,10 @@ const props = defineProps<{
   scene?: 'review' | 'comment' | 'review_body'
   /** 已选择的电影ID列表，用于过滤 */
   excludedMovieIds?: number[]
-  /** 是否从片单编辑页面打开，如果是则详情页返回会保留编辑状态 */
-  fromPlaylistEdit?: boolean
+  /** 从电影详情返回时的标识，填入 query.from */
+  detailBackTo?: string
+  /** 是否多选模式，默认 true */
+  multiple?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -206,6 +216,7 @@ const router = useRouter()
 
 const scene = computed(() => props.scene || 'review')
 const excludedIds = computed(() => props.excludedMovieIds || [])
+const multiple = computed(() => props.multiple !== false)
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作',
@@ -223,6 +234,7 @@ const visible = ref(false)
 const loading = ref(false)
 const movieList = ref<Movie[]>([])
 const selectedMovies = ref<Movie[]>([])
+const selectedMovie = ref<Movie | null>(null)
 const currentPage = ref(1)
 const total = ref(0)
 const pageSize = ref(20)
@@ -307,16 +319,32 @@ function handleReset() {
   fetchMovies(1)
 }
 
-// 多选变更
+// 多选变更（仅 multiple 模式生效）
 function handleSelectionChange(selection: Movie[]) {
-  selectedMovies.value = selection
+  if (multiple.value) {
+    selectedMovies.value = selection
+  }
+}
+
+// 单选变更（仅 !multiple 模式生效）
+function handleCurrentChange(row: Movie | null) {
+  if (!multiple.value) {
+    selectedMovie.value = row
+  }
+}
+
+// 点击行选中（单选模式）
+function handleRowClick(row: Movie) {
+  if (!multiple.value) {
+    selectedMovie.value = selectedMovie.value?.id === row.id ? null : row
+  }
 }
 
 // 打开电影详情
 function openMovieDetail(row: Movie) {
   const query: Record<string, string> = {}
-  if (props.fromPlaylistEdit) {
-    query.from = "playlist-edit"
+  if (props.detailBackTo) {
+    query.from = props.detailBackTo
   }
   router.push({
     name: "AdminMovieDetail",
@@ -327,19 +355,24 @@ function openMovieDetail(row: Movie) {
 
 // 确认选择
 function handleConfirm() {
-  if (selectedMovies.value.length > 0) {
-    selectedMovies.value.forEach(movie => {
-      emit('select', movie)
-    })
-    handleClose()
+  if (multiple.value) {
+    if (selectedMovies.value.length > 0) {
+      selectedMovies.value.forEach(movie => emit('select', movie))
+      handleClose()
+    }
+  } else {
+    if (selectedMovie.value) {
+      emit('select', selectedMovie.value)
+      handleClose()
+    }
   }
 }
 
 // 关闭弹窗
 function handleClose() {
   emit('update:modelValue', false)
-  // 重置状态
   selectedMovies.value = []
+  selectedMovie.value = null
   filters.value = {
     keyword: '',
     type_num: undefined,
