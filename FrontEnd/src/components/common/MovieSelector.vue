@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     :title="scene === 'review_body' ? '选择电影（仅显示有待爬长评的电影）' : '选择电影'"
-    width="800px"
+    width="1000px"
     @close="handleClose"
   >
     <!-- 筛选栏 - 非 review_body 场景才显示全量筛选 -->
@@ -76,17 +76,24 @@
       </div>
     </div>
 
+    <!-- 提示：已过滤电影 -->
+    <div v-if="filteredCount > 0" class="filter-hint">
+      <el-icon><InfoFilled /></el-icon>
+      <span>已过滤 {{ filteredCount }} 部已选择的电影</span>
+    </div>
+
     <!-- 电影列表 - review_body 场景：简化的待爬列表 -->
     <el-table
-      v-if="scene !== 'review_body' || movieList.length > 0"
-      :data="movieList"
+      v-if="scene === 'review_body' || filteredMovieList.length > 0"
+      :data="filteredMovieList"
       v-loading="loading"
-      @row-click="handleRowClick"
+      @selection-change="handleSelectionChange"
       stripe
       height="400px"
-      highlight-current-row
+      :row-class-name="getRowClassName"
     >
       <template v-if="scene === 'review_body'">
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="title" label="电影名" min-width="280" show-overflow-tooltip />
         <el-table-column prop="douban_id" label="豆瓣ID" width="140" />
         <el-table-column prop="pending_count" label="待爬数量" width="100">
@@ -96,6 +103,7 @@
         </el-table-column>
       </template>
       <template v-else>
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="title" label="电影名" min-width="200" show-overflow-tooltip />
         <el-table-column prop="douban_id" label="豆瓣ID" width="120" />
         <el-table-column label="类型" min-width="120">
@@ -118,14 +126,31 @@
             <span class="rating-text">{{ row.rating?.average ?? '—' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              type="primary"
+              link
+              size="small"
+              @click.stop="openMovieDetail(row)"
+            >
+              详情
+            </el-button>
+          </template>
+        </el-table-column>
       </template>
     </el-table>
+
+    <!-- 空状态 -->
+    <div v-if="!loading && filteredMovieList.length === 0 && movieList.length > 0" class="empty-hint">
+      <el-empty description="所有电影都已选择" />
+    </div>
 
     <!-- review_body 场景：无待爬长评的空状态 -->
     <div v-if="scene === 'review_body' && !loading && movieList.length === 0" class="empty-hint">
       <el-empty description="暂无可爬取长评正文的电影">
         <template #extra>
-          <p style="color: #909399; font-size: 13px;">
+          <p style="color: #909399; font-size: 13px">
             请先提交「采集长评摘要」任务，获取长评ID后再来爬取正文
           </p>
         </template>
@@ -147,8 +172,8 @@
     <template #footer>
       <div class="dialog-footer">
         <el-button @click="handleClose">取消</el-button>
-        <el-button type="primary" @click="handleConfirm" :disabled="!selectedMovie">
-          确认选择
+        <el-button type="primary" @click="handleConfirm" :disabled="selectedMovies.length === 0">
+          确认选择 ({{ selectedMovies.length }})
         </el-button>
       </div>
     </template>
@@ -157,13 +182,19 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { adminMoviesApi } from '@/api/admin/movies'
 import client from '@/api/client'
 import type { Movie } from '@/types/movie'
+import { InfoFilled } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   modelValue: boolean
   scene?: 'review' | 'comment' | 'review_body'
+  /** 已选择的电影ID列表，用于过滤 */
+  excludedMovieIds?: number[]
+  /** 是否从片单编辑页面打开，如果是则详情页返回会保留编辑状态 */
+  fromPlaylistEdit?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -171,7 +202,10 @@ const emit = defineEmits<{
   (e: 'select', movie: Movie): void
 }>()
 
+const router = useRouter()
+
 const scene = computed(() => props.scene || 'review')
+const excludedIds = computed(() => props.excludedMovieIds || [])
 
 const TYPE_MAP: Record<number, string> = {
   1: '纪录片', 2: '传记', 3: '犯罪', 4: '历史', 5: '动作',
@@ -188,7 +222,7 @@ const typeOptions = Object.entries(TYPE_MAP).map(
 const visible = ref(false)
 const loading = ref(false)
 const movieList = ref<Movie[]>([])
-const selectedMovie = ref<Movie | null>(null)
+const selectedMovies = ref<Movie[]>([])
 const currentPage = ref(1)
 const total = ref(0)
 const pageSize = ref(20)
@@ -202,6 +236,21 @@ const filters = ref({
 })
 
 const allRegions = ref<{ id: number; name: string }[]>([])
+
+// 过滤后的电影列表
+const filteredMovieList = computed(() => {
+  return movieList.value.filter(movie => !excludedIds.value.includes(movie.id))
+})
+
+// 被过滤的电影数量
+const filteredCount = computed(() => {
+  return movieList.value.length - filteredMovieList.value.length
+})
+
+// 给已选择的电影添加类名（虽然已过滤，但保留这个逻辑）
+const getRowClassName = (row: Movie) => {
+  return ''
+}
 
 async function fetchAllRegions() {
   try {
@@ -258,15 +307,30 @@ function handleReset() {
   fetchMovies(1)
 }
 
-// 行点击
-function handleRowClick(row: Movie) {
-  selectedMovie.value = row
+// 多选变更
+function handleSelectionChange(selection: Movie[]) {
+  selectedMovies.value = selection
+}
+
+// 打开电影详情
+function openMovieDetail(row: Movie) {
+  const query: Record<string, string> = {}
+  if (props.fromPlaylistEdit) {
+    query.from = "playlist-edit"
+  }
+  router.push({
+    name: "AdminMovieDetail",
+    params: { id: row.id },
+    query
+  })
 }
 
 // 确认选择
 function handleConfirm() {
-  if (selectedMovie.value) {
-    emit('select', selectedMovie.value)
+  if (selectedMovies.value.length > 0) {
+    selectedMovies.value.forEach(movie => {
+      emit('select', movie)
+    })
     handleClose()
   }
 }
@@ -275,7 +339,7 @@ function handleConfirm() {
 function handleClose() {
   emit('update:modelValue', false)
   // 重置状态
-  selectedMovie.value = null
+  selectedMovies.value = []
   filters.value = {
     keyword: '',
     type_num: undefined,
@@ -307,6 +371,35 @@ onMounted(() => {
 .cus_space-between {
   display: flex;
   justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.gap-4 {
+  gap: 16px;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
+.justify-end {
+  justify-content: flex-end;
+}
+
+.mt-4 {
+  margin-top: 16px;
 }
 
 .rating-text {
@@ -314,8 +407,24 @@ onMounted(() => {
   font-weight: bold;
 }
 
+.filter-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #ecf5ff;
+  color: #409eff;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
 /* 选中行高亮样式更明显 */
 :deep(.el-table__row.current-row) {
   background-color: #ecf5ff !important;
+}
+
+.empty-hint {
+  padding: 40px 0;
 }
 </style>

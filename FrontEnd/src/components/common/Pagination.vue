@@ -4,7 +4,7 @@
       :current-page="current"
       :page-size="pageSize"
       :total="total"
-      :page-sizes="[12, 24, 48]"
+      :page-sizes="[15, 30, 60]"
       layout="total, sizes, prev, pager, next, jumper"
       :background="true"
       @current-change="$emit('change', $event)"

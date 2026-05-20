@@ -1,7 +1,11 @@
 <template>
   <div class="avatar-upload">
-    <!-- 头像预览 -->
-    <div class="avatar-preview" @click="handleSelectFile">
+    <!-- 预览 -->
+    <div
+      class="avatar-preview"
+      :class="{ 'is-cover': mode === 'cover' }"
+      @click="handleSelectFile"
+    >
       <el-image
         v-if="previewUrl"
         :src="previewUrl"
@@ -10,17 +14,19 @@
       >
         <template #error>
           <div class="avatar-placeholder">
-            <el-icon :size="40"><User /></el-icon>
+            <el-icon :size="iconSize" v-if="mode === 'avatar'"><User /></el-icon>
+            <el-icon :size="iconSize" v-else><Picture /></el-icon>
           </div>
         </template>
       </el-image>
       <div v-else class="avatar-placeholder">
-        <el-icon :size="40" v-if="!loading"><User /></el-icon>
-        <el-icon v-else :size="40" class="is-rotating"><Loading /></el-icon>
+        <el-icon :size="iconSize" v-if="!loading && mode === 'avatar'"><User /></el-icon>
+        <el-icon :size="iconSize" v-else-if="!loading && mode === 'cover'"><Picture /></el-icon>
+        <el-icon v-else :size="iconSize" class="is-rotating"><Loading /></el-icon>
       </div>
       <div class="avatar-mask">
         <el-icon :size="20"><Camera /></el-icon>
-        <span>{{ loading ? '上传中' : '更换头像' }}</span>
+        <span>{{ loading ? '上传中' : mode === 'cover' ? '更换封面' : '更换头像' }}</span>
       </div>
     </div>
 
@@ -36,8 +42,8 @@
     <!-- 裁剪弹窗 -->
     <el-dialog
       v-model="cropperVisible"
-      title="裁剪头像"
-      width="500px"
+      :title="mode === 'cover' ? '裁剪封面' : '裁剪头像'"
+      width="600px"
       :close-on-click-modal="false"
       @close="resetCropper"
     >
@@ -48,10 +54,10 @@
           :output-type="'webp'"
           :output-size="0.8"
           :auto-crop="true"
-          :auto-crop-width="200"
-          :auto-crop-height="200"
+          :auto-crop-width="cropWidth"
+          :auto-crop-height="cropHeight"
           :fixed="true"
-          :fixed-number="[1,1]"
+          :fixed-number="fixedRatio"
           :center-box="true"
           :info="true"
           :can-move="true"
@@ -73,14 +79,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { User, Camera, Loading } from '@element-plus/icons-vue'
+import { User, Camera, Loading, Picture } from '@element-plus/icons-vue'
 import { VueCropper } from 'vue-cropper/next'
 import 'vue-cropper/next/dist/index.css'
-import { uploadAvatar } from '@/api/profile'
+import { uploadAvatar, uploadListCover } from '@/api/profile'
 
 const props = defineProps<{
-  /** 当前头像URL */
+  /** 当前URL */
   modelValue?: string
+  /** 模式：avatar-头像，cover-封面 */
+  mode?: 'avatar' | 'cover'
 }>()
 
 const emit = defineEmits<{
@@ -91,6 +99,12 @@ const emit = defineEmits<{
   /** 上传失败事件 */
   (e: 'error', err: Error): void
 }>()
+
+const mode = computed(() => props.mode || 'avatar')
+const fixedRatio = computed(() => mode.value === 'cover' ? [4, 1] : [1, 1])
+const cropWidth = computed(() => mode.value === 'cover' ? 1280 : 200)
+const cropHeight = computed(() => mode.value === 'cover' ? 320 : 200)
+const iconSize = computed(() => mode.value === 'avatar' ? 40 : 60)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const cropperRef = ref<InstanceType<typeof VueCropper> | null>(null)
@@ -112,8 +126,8 @@ const handleFileChange = (e: Event) => {
   if (!file) return
 
   // 校验文件大小
-  if (file.size > 2 * 1024 * 1024) {
-    ElMessage.error('头像大小不能超过2MB')
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.error('图片大小不能超过5MB')
     resetFileInput()
     return
   }
@@ -143,21 +157,28 @@ const handleConfirmCrop = async () => {
     cropperRef.value.getCropBlob(async (blob: Blob) => {
       try {
         // 转成File对象
-        const file = new File([blob], 'avatar.webp', { type: 'image/webp' })
+        const fileName = mode.value === 'avatar' ? 'avatar.webp' : 'cover.webp'
+        const file = new File([blob], fileName, { type: 'image/webp' })
         
         // 上传到后端
-        const res = await uploadAvatar(file)
-        const avatarUrl = res.data.data.avatar_url
+        let avatarUrl: string
+        if (mode.value === 'avatar') {
+          const res = await uploadAvatar(file)
+          avatarUrl = res.data.data.avatar_url
+        } else {
+          const res = await uploadListCover(file)
+          avatarUrl = res.data.data.cover_url
+        }
         
         // 回调
         emit('update:modelValue', avatarUrl)
         emit('success', avatarUrl)
-        ElMessage.success('头像上传成功')
+        ElMessage.success(mode.value === 'avatar' ? '头像上传成功' : '封面上传成功')
         
         // 关闭弹窗
         cropperVisible.value = false
       } catch (err: any) {
-        ElMessage.error(err.response?.data?.message || '头像上传失败')
+        ElMessage.error(err.response?.data?.message || '上传失败')
         emit('error', err)
       } finally {
         uploading.value = false
@@ -165,7 +186,7 @@ const handleConfirmCrop = async () => {
       }
     })
   } catch (err: any) {
-    ElMessage.error('头像裁剪失败')
+    ElMessage.error('裁剪失败')
     uploading.value = false
     loading.value = false
   }
@@ -202,6 +223,12 @@ const resetCropper = () => {
   cursor: pointer;
   border: 2px solid #eee;
   transition: all 0.3s;
+}
+
+.avatar-preview.is-cover {
+  width: 400px;
+  height: 100px;
+  border-radius: 8px;
 }
 
 .avatar-preview:hover {
@@ -247,7 +274,7 @@ const resetCropper = () => {
 }
 
 .cropper-container {
-  height: 400px;
+  height: 450px;
   padding: 10px;
 }
 

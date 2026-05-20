@@ -243,6 +243,7 @@ let unsubProgress: (() => void) | null = null
 let unsubStorageAlert: (() => void) | null = null
 let unsubTaskStarted: (() => void) | null = null
 let _lastWsUpdate = 0
+let queueAutoRefreshTimer: number | null = null
 
 const debugTaskFailureLoading = ref(false)
 const debugWorkerCrashLoading = ref(false)
@@ -306,6 +307,16 @@ onMounted(() => {
     fetchQueue()
     fetchLogs()
     fetchRateLimit()
+
+    // 队列状态10秒自动刷新，和Worker卡片同步
+    queueAutoRefreshTimer = window.setInterval(() => {
+      if (showDetails.value) {
+        // 开启详情时自动刷新完整详情数据
+        onDetailsToggle(true)
+      } else {
+        fetchQueue()
+      }
+    }, 10000)
   }
 
   unsubStatus = wsManager.on('system_status', (msg) => {
@@ -385,6 +396,12 @@ onUnmounted(() => {
   unsubStorageAlert = null
   unsubTaskStarted?.()
   unsubTaskStarted = null
+
+  // 清理自动刷新定时器
+  if (queueAutoRefreshTimer) {
+    clearInterval(queueAutoRefreshTimer)
+    queueAutoRefreshTimer = null
+  }
 })
 </script>
 

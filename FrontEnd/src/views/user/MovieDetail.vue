@@ -1,5 +1,11 @@
 <template>
   <div v-loading="loading" class="detail-page">
+    <!-- 从片单进入时显示返回按钮 -->
+    <div v-if="fromPlaylist" class="back-bar">
+      <el-button :icon="ArrowLeft" @click="goBackToPlaylist" text>
+        返回片单
+      </el-button>
+    </div>
     <ErrorAlert :message="error" @close="error = ''" />
 
     <template v-if="detail">
@@ -130,59 +136,113 @@
           @retry="fetchWordCloud(Number(route.params.id))"
         />
       </div>
+
+      <!-- ── 用户操作按钮组 ── -->
+      <div class="section">
+        <h2 class="section-title">我的标记</h2>
+        <div class="action-button-group">
+          <el-button
+            :type="actionState.want_watch ? 'primary' : 'default'"
+            :icon="Star"
+            :loading="actionLoading === 'want_watch'"
+            @click="toggleAction('want_watch')"
+          >
+            {{ actionState.want_watch ? '已想看' : '想看' }}
+          </el-button>
+          <el-button
+            :type="actionState.watching ? 'primary' : 'default'"
+            :icon="VideoPlay"
+            :loading="actionLoading === 'watching'"
+            @click="toggleAction('watching')"
+          >
+            {{ actionState.watching ? '在看中' : '在看' }}
+          </el-button>
+          <el-button
+            :type="actionState.watched ? 'success' : 'default'"
+            :icon="Check"
+            :loading="actionLoading === 'watched'"
+            @click="toggleAction('watched')"
+          >
+            {{ actionState.watched ? '已看过' : '看过' }}
+          </el-button>
+          <el-button
+            :type="actionState.favorite ? 'warning' : 'default'"
+            :icon="CollectionTag"
+            :loading="actionLoading === 'favorite'"
+            @click="toggleAction('favorite')"
+          >
+            {{ actionState.favorite ? '已收藏' : '收藏' }}
+          </el-button>
+        </div>
+
+        <!-- 评论入口 -->
+        <div class="review-entry" v-if="actionState.watched">
+          <!-- 已评论：显示占位 + 删除按钮 -->
+          <div v-if="actionState.reviewed" class="reviewed-placeholder">
+            <el-alert
+              title="你已发表评论，每部电影只能评论一次"
+              type="warning"
+              :closable="false"
+              show-icon
+            />
+            <el-button
+              class="mt-3"
+              type="danger"
+              plain
+              :loading="actionLoading === 'review'"
+              @click="deleteReview"
+            >
+              删除已有评论
+            </el-button>
+          </div>
+          <!-- 已提交（刚发布的 optimistic UI） -->
+          <el-alert
+            v-else-if="reviewSubmitted"
+            title="评论已发布"
+            type="success"
+            :closable="false"
+            show-icon
+          />
+          <!-- 未评论：显示表单 -->
+          <div v-else class="review-form">
+            <el-rate
+              v-model="reviewRating"
+              :max="5"
+              :texts="['很差', '较差', '还行', '推荐', '力荐']"
+              show-text
+              class="mb-3"
+            />
+            <el-input
+              v-model="reviewText"
+              type="textarea"
+              :rows="3"
+              placeholder="写下你对这部电影的看法吧（最多120字）..."
+              maxlength="120"
+              show-word-limit
+            />
+            <div class="mt-3" style="text-align: right;">
+              <el-button type="primary" :loading="actionLoading === 'review'" @click="submitReview">
+                发布评论
+              </el-button>
+            </div>
+          </div>
+        </div>
+        <el-alert
+          v-else
+          title="标记看过之后才能评论哦"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <div v-if="actionError" class="mt-3">
+          <el-alert :title="actionError" type="error" @close="actionError = ''" show-icon />
+        </div>
+      </div>
     </template>
 
     <el-divider />
 
     <el-tabs v-model="activeTab" class="review-tabs">
-      <el-tab-pane label="长评" name="reviews">
-        <div v-for="review in reviewList" :key="review.id || review._id" class="review-card">
-          <div class="review-card-header">
-            <span class="review-card-author">{{ review.author || '匿名用户' }}</span>
-            <span v-if="review.rating" class="review-card-rating">
-              <el-icon :size="14"><StarFilled /></el-icon>
-              {{ formatRating(review.rating) }}
-            </span>
-          </div>
-          <div class="review-card-content-wrapper">
-            <div
-              v-if="!review.expanded && (review.content || review.text) && (review.content || review.text)?.length > 200"
-              class="review-card-content-preview"
-            >
-              {{ (review.content || review.text)?.slice(0, 200) }}...
-            </div>
-            <div
-              v-else-if="review.expanded"
-              class="review-card-content-full"
-              v-html="formatContent(review.content || review.text || '')"
-            ></div>
-            <p
-              v-else
-              class="review-card-content"
-            >{{ review.content || review.text || '' }}</p>
-            <el-button
-              v-if="(review.content || review.text) && (review.content || review.text)?.length > 200"
-              type="primary"
-              link
-              size="small"
-              @click="toggleReviewExpand(review)"
-            >
-              {{ review.expanded ? '收起' : '展开全文' }}
-            </el-button>
-          </div>
-        </div>
-        <div v-if="!reviewList.length && !reviewLoading" class="empty-tab">
-          暂无内容
-        </div>
-        <Pagination
-          v-if="reviewTotal > reviewPageSize"
-          :current="reviewPage"
-          :total="reviewTotal"
-          :page-size="reviewPageSize"
-          @change="handleReviewPageChange"
-        />
-      </el-tab-pane>
-
       <el-tab-pane label="短评" name="comments">
         <!-- 筛选提示 -->
         <div v-if="filterKeyword" class="filter-alert mb-4">
@@ -201,22 +261,22 @@
           </div>
           <div class="comment-card-content-wrapper">
             <div
-              v-if="!comment.expanded && (comment.content || comment.text) && (comment.content || comment.text)?.length > 150"
+              v-if="!comment.expanded && getCommentContent(comment).length > 150"
               class="comment-card-content-preview"
-              v-html="highlightKeyword((comment.content || comment.text)?.slice(0, 150) + '...', filterKeyword)"
+              v-html="highlightKeyword(getCommentContent(comment).slice(0, 150) + '...', filterKeyword)"
             ></div>
             <div
               v-else-if="comment.expanded"
               class="comment-card-content-full"
-              v-html="highlightKeyword(formatContent(comment.content || comment.text || ''), filterKeyword)"
+              v-html="highlightKeyword(formatContent(getCommentContent(comment)), filterKeyword)"
             ></div>
             <p
               v-else
               class="comment-card-content"
-              v-html="highlightKeyword(comment.content || comment.text || '', filterKeyword)"
+              v-html="highlightKeyword(getCommentContent(comment), filterKeyword)"
             ></p>
             <el-button
-              v-if="(comment.content || comment.text) && (comment.content || comment.text)?.length > 150"
+              v-if="getCommentContent(comment).length > 150"
               type="primary"
               link
               size="small"
@@ -237,26 +297,88 @@
           @change="handleCommentPageChange"
         />
       </el-tab-pane>
+
+      <el-tab-pane label="长评" name="reviews">
+        <div v-for="review in reviewList" :key="review.id || review._id" class="review-card">
+          <div class="review-card-header">
+            <span class="review-card-author">{{ review.author || '匿名用户' }}</span>
+            <span v-if="review.rating" class="review-card-rating">
+              <el-icon :size="14"><StarFilled /></el-icon>
+              {{ formatRating(review.rating) }}
+            </span>
+          </div>
+          <div class="review-card-content-wrapper">
+            <div
+              v-if="!review.expanded && getReviewContent(review).length > 200"
+              class="review-card-content-preview"
+            >
+              {{ getReviewContent(review).slice(0, 200) }}...
+            </div>
+            <div
+              v-else-if="review.expanded"
+              class="review-card-content-full"
+              v-html="formatContent(getReviewContent(review))"
+            ></div>
+            <p
+              v-else
+              class="review-card-content"
+            >{{ getReviewContent(review) }}</p>
+            <el-button
+              v-if="getReviewContent(review).length > 200"
+              type="primary"
+              link
+              size="small"
+              @click="toggleReviewExpand(review)"
+            >
+              {{ review.expanded ? '收起' : '展开全文' }}
+            </el-button>
+          </div>
+        </div>
+        <div v-if="!reviewList.length && !reviewLoading" class="empty-tab">
+          暂无内容
+        </div>
+        <Pagination
+          v-if="reviewTotal > reviewPageSize"
+          :current="reviewPage"
+          :total="reviewTotal"
+          :page-size="reviewPageSize"
+          @change="handleReviewPageChange"
+        />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, reactive, onMounted, watch, nextTick, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useMovieStore } from '@/stores/movies'
-import type { MovieDetail, WordCloudItem } from '@/types/movie'
+import type { MovieDetail, WordCloudItem, MovieStatus } from '@/types/movie'
 import type { Review, Comment } from '@/types/review'
-import { userApi } from '@/api/user'
+import { userApi, userActionApi } from '@/api/user'
 import { moviesApi } from '@/api/movies'
 import Pagination from '@/components/common/Pagination.vue'
 import ErrorAlert from '@/components/common/ErrorAlert.vue'
 import CommentWordCloud from '@/components/common/CommentWordCloud.vue'
 import { formatRating, formatCount, formatCrewRole } from '@/utils/format'
-import { StarFilled, VideoCamera, MagicStick, CollectionTag, ChatDotRound } from '@element-plus/icons-vue'
+import { StarFilled, VideoCamera, MagicStick, CollectionTag, ChatDotRound, Star, VideoPlay, Check, ArrowLeft } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const router = useRouter()
 const store = useMovieStore()
+
+// 判断是否从片单页进入
+const fromPlaylist = computed(() => route.query.from === 'playlist')
+const playlistId = computed(() => route.query.listId as string)
+
+// 返回片单详情页
+function goBackToPlaylist() {
+  if (playlistId.value) {
+    router.push(`/playlist/${playlistId.value}`)
+  } else {
+    router.back()
+  }
+}
 
 const detail = ref<MovieDetail | null>(null)
 
@@ -273,16 +395,31 @@ const error = ref('')
 const reviewList = ref<(Review & { expanded?: boolean })[]>([])
 const reviewPage = ref(1)
 const reviewTotal = ref(0)
-const reviewPageSize = ref(10)
+const reviewPageSize = ref(15)
 const reviewLoading = ref(false)
 
 const commentList = ref<(Comment & { expanded?: boolean })[]>([])
 const commentPage = ref(1)
 const commentTotal = ref(0)
-const commentPageSize = ref(10)
+const commentPageSize = ref(15)
 const commentLoading = ref(false)
 
-const activeTab = ref('reviews')
+const activeTab = ref('comments')
+
+// ── 用户行为状态 ──
+const actionState = reactive<MovieStatus>({
+  movie_id: 0,
+  want_watch: false,
+  watching: false,
+  watched: false,
+  favorite: false,
+  reviewed: false,
+})
+const actionLoading = ref<string | null>(null)
+const actionError = ref('')
+const reviewText = ref('')
+const reviewRating = ref(0)
+const reviewSubmitted = ref(false)
 
 // 词云相关
 const wordCloudWords = ref<WordCloudItem[]>([])
@@ -302,6 +439,14 @@ function getStarPercent(stars: number): number {
   const key = String(stars)
   const val = Number(distribution[key]) || 0
   return Math.round((val / count) * 100)
+}
+
+function getCommentContent(comment: any): string {
+  return comment.content || comment.text || ''
+}
+
+function getReviewContent(review: any): string {
+  return review.content || review.text || ''
 }
 
 async function fetchWordCloud(movieId: number): Promise<void> {
@@ -416,10 +561,108 @@ function handleCommentPageChange(p: number): void {
   fetchComments(p)
 }
 
+// ── 用户行为操作 ──
+
+/** 加载用户对该电影的标记状态 */
+async function loadActionStatus(movieId: number): Promise<void> {
+  try {
+    console.log('[MovieDetail] loading action status for movie:', movieId)
+    const res = await userActionApi.status(movieId)
+    console.log('[MovieDetail] status response:', res.data)
+    Object.assign(actionState, res.data)
+  } catch {
+    console.warn('[MovieDetail] loadActionStatus failed (likely not logged in)')
+  }
+}
+
+/** 切换标记状态（标记 / 取消） */
+async function toggleAction(action: string): Promise<void> {
+  const movieId = Number(route.params.id)
+  if (!movieId) return
+  actionLoading.value = action
+  actionError.value = ''
+  console.log('[MovieDetail] toggleAction:', action, 'movieId:', movieId, 'current:', (actionState as any)[action])
+  try {
+    if ((actionState as any)[action]) {
+      // 取消
+      await userActionApi.unmark(movieId, action)
+      ;(actionState as any)[action] = false
+    } else {
+      // 标记
+      await userActionApi.mark(movieId, action)
+      // 观看状态机递进：设为当前 action，清零其他观看标记
+      if (['want_watch', 'watching', 'watched'].includes(action)) {
+        actionState.want_watch = false
+        actionState.watching = false
+        actionState.watched = false
+        ;(actionState as any)[action] = true
+        // 标记"看过"后显示评论入口
+        if (action === 'watched') {
+          reviewSubmitted.value = false
+        }
+      } else {
+        ;(actionState as any)[action] = !(actionState as any)[action]
+      }
+    }
+    // 刷新状态（确保服务器端状态一致）
+    await loadActionStatus(movieId)
+  } catch (err: any) {
+    actionError.value = err.response?.data?.error || '操作失败，请稍后重试'
+  } finally {
+    actionLoading.value = null
+  }
+}
+
+/** 提交评论 */
+async function submitReview(): Promise<void> {
+  const movieId = Number(route.params.id)
+  if (!movieId || !reviewText.value.trim()) return
+  actionLoading.value = 'review'
+  actionError.value = ''
+  try {
+    await userActionApi.comment(movieId, {
+      review_text: reviewText.value.trim(),
+      rating: reviewRating.value || undefined,
+    })
+    reviewSubmitted.value = true
+    reviewText.value = ''
+    reviewRating.value = 0
+    actionState.reviewed = true
+    // 刷新短评列表，让用户看到刚发的评论
+    fetchComments(1)
+  } catch (err: any) {
+    actionError.value = err.response?.data?.error || '评论失败，请稍后重试'
+  } finally {
+    actionLoading.value = null
+  }
+}
+
+/** 删除评论 */
+async function deleteReview(): Promise<void> {
+  const movieId = Number(route.params.id)
+  if (!movieId) return
+  actionLoading.value = 'review'
+  actionError.value = ''
+  try {
+    await userActionApi.deleteComment(movieId)
+    actionState.reviewed = false
+    reviewSubmitted.value = false
+    reviewText.value = ''
+    reviewRating.value = 0
+    // 刷新评论列表
+    fetchComments(1)
+  } catch (err: any) {
+    actionError.value = err.response?.data?.error || '删除失败，请稍后重试'
+  } finally {
+    actionLoading.value = null
+  }
+}
+
 watch(() => route.params.id, async (newId) => {
   if (newId) {
     const id = Number(newId)
     await loadDetail(id)
+    loadActionStatus(id)
     fetchReviews()
     fetchComments()
   }
@@ -429,6 +672,7 @@ onMounted(async () => {
   const id = Number(route.params.id)
   if (!id) return
   await loadDetail(id)
+  loadActionStatus(id)
   fetchReviews()
   fetchComments()
 })
@@ -439,6 +683,10 @@ onMounted(async () => {
   max-width: 900px;
   margin: 0 auto;
   padding: 32px 24px;
+}
+
+.back-bar {
+  margin-bottom: 16px;
 }
 
 .detail-hero {
@@ -715,5 +963,31 @@ onMounted(async () => {
   background: #fef08a !important;
   padding: 1px 2px;
   border-radius: 2px;
+}
+
+/* 用户行为按钮组 */
+.action-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.review-entry {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #ebeef5;
+}
+
+.reviewed-placeholder .mt-3 {
+  margin-top: 12px;
+}
+
+.review-form .mb-3 {
+  margin-bottom: 12px;
+}
+
+.review-form .mt-3 {
+  margin-top: 12px;
 }
 </style>

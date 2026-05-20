@@ -182,8 +182,11 @@ async def task_queue_status():
     try:
         pool = get_browser_pool()
         health = pool.get_worker_health()
-        result["worker_busy"] = health["busy_count"]
+        # worker_busy 直接用 _worker_current_task 长度，和 in_flight 保持一致
+        result["worker_busy"] = len(pool._worker_current_task)
         result["worker_idle"] = health["idle_count"]
+        result["worker_cooldown"] = health["cooldown_count"]
+        result["worker_cooldown_info"] = health["cooldown_info"]
 
         if include_details:
             in_flight = []

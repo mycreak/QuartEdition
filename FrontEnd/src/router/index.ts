@@ -36,6 +36,12 @@ const routes: RouteRecordRaw[] = [
       component: () => import('@/views/user/ProfileView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/playlist/:id',
+      name: 'PlaylistDetail',
+      component: () => import('@/views/user/PlaylistDetail.vue'),
+      meta: { requiresAuth: true },
+    },
   {
     path: '/admin',
     name: 'Admin',
@@ -95,6 +101,24 @@ const routes: RouteRecordRaw[] = [
           name: 'AdminProfile',
           component: () => import('@/views/admin/AdminProfileView.vue'),
           meta: { requiresAuth: true },
+        },
+        {
+          path: 'users/:id/profile',
+          name: 'UserProfile',
+          component: () => import('@/views/admin/UserProfileView.vue'),
+          meta: { requiresAuth: true, permission: 'user:manage' },
+        },
+        {
+          path: 'playlists/new',
+          name: 'PlaylistNew',
+          component: () => import('@/views/admin/PlaylistEditView.vue'),
+          meta: { requiresAuth: true, permission: 'movie:manage' },
+        },
+        {
+          path: 'playlists/:id/edit',
+          name: 'PlaylistEdit',
+          component: () => import('@/views/admin/PlaylistEditView.vue'),
+          meta: { requiresAuth: true, permission: 'movie:manage' },
         }
       ],
     },

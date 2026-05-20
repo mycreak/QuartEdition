@@ -84,6 +84,27 @@ def classify_item_error(exc: Exception) -> str:
     return "unknown"
 
 
+async def _trigger_similarity_check(tag_id: int, dimension: str) -> None:
+    """
+    模块级辅助函数：异步触发风格标签相似度检测。
+
+    由 _handle_ai_review_summary / _handle_ai_wordcloud 在插入新标签后
+    通过 asyncio.create_task 调用，fire-and-forget，不阻塞主流程。
+
+    输入：tag_id, dimension
+    副作用：更新 movie_style_tag.review_status / merged_to_tag_id
+    异常：内部捕获，不向外抛出
+    """
+    try:
+        from services.style_tag_service import _get_style_tag_service
+        svc = _get_style_tag_service()
+        await svc.check_similarity(tag_id, dimension)
+    except Exception:
+        logger.exception(
+            f"[风格标签检测] tag_id={tag_id} dimension={dimension} 异常"
+        )
+
+
 # ═══════════════════════════════════════════════════════════════
 # CrawlerEngine — 爬虫引擎（类封装，依赖注入）
 # ═══════════════════════════════════════════════════════════════
@@ -366,7 +387,7 @@ class CrawlerEngine:
             FetcherError — 3 次重试全失败
         """
         douban_id = data["douban_id"]
-        title = data.get("title", "")
+        title = data.get("title") or data.get("movie_title", "")
         cookie_id = data.get("cookie_id", "")
         proxy_key = data.get("proxy_key", "")
         task_id = data.get("id")
@@ -467,7 +488,7 @@ class CrawlerEngine:
 
     async def _handle_movie_detail_crawl(self, data: dict) -> None:
         douban_id = data["douban_id"]
-        title = data.get("title", "")
+        title = data.get("title") or data.get("movie_title", "")
         task_id = data.get("id")
 
         logger.info(f"[电影详情补爬] task={task_id} douban_id={douban_id} title='{title}'")
@@ -902,13 +923,15 @@ class CrawlerEngine:
         """
         演职人员补爬任务（P0 解耦后独立调度）。
 
-        输入：{type, douban_id, movie_id, admin_id?, ...}
+        输入：{type, douban_id, movie_id, admin_id?, cookie_id?, proxy_key?, ...}
         输出：无（成功返回，失败抛异常）
         副作用：BrowserFetcher 爬 celebrities 页 → save_crew（事务原子写入）
         """
         task_id = data.get("id")
         douban_id = data.get("douban_id", "")
         movie_id = data.get("movie_id")
+        cookie_id = data.get("cookie_id", "")
+        proxy_key = data.get("proxy_key", "")
 
         if not douban_id:
             raise ValueError("director_crawl 任务缺少 douban_id 字段")
@@ -918,15 +941,27 @@ class CrawlerEngine:
         CELEB_PAGE_BASE = "https://movie.douban.com/subject/{douban_id}/celebrities"
         celeb_url = CELEB_PAGE_BASE.format(douban_id=douban_id)
 
-        logger.info(f"[director_crawl] task={task_id} douban_id={douban_id} movie_id={movie_id}")
+        logger.info(
+            f"[director_crawl] task={task_id} douban_id={douban_id} movie_id={movie_id} "
+            f"cookie={cookie_id or '游客'} proxy={proxy_key or '直连'}"
+        )
 
         if self._movie_service is None:
             raise RuntimeError("MovieService 未注入，无法写入数据库")
 
-        # 爬取 celebrities 页
+        # 构建身份（继承父任务 cookie + proxy，游客模式兜底）
         task_str = json.dumps(data, ensure_ascii=False)
+        identity = None
+        if self._identity_manager is not None and (cookie_id or proxy_key):
+            await self._emit_stage(task_str, f"🔍 正在解析身份: cookie={cookie_id or '游客'} proxy={proxy_key or '直连'}")
+            identity = await self._identity_manager.resolve(cookie_id, proxy_key)
+            await self._emit_stage(task_str, f"✅ 身份就绪: cookie={cookie_id or '游客'} proxy={proxy_key or '直连'}")
+        else:
+            await self._emit_stage(task_str, "👤 未指定身份，使用游客模式")
+
+        # 爬取 celebrities 页
         await self._emit_stage(task_str, f"📡 正在请求演职人员页: {celeb_url}")
-        html, ok, _ = await self._browser_fetch_page(celeb_url)
+        html, ok, _ = await self._browser_fetch_page(celeb_url, identity)
         if not ok:
             raise FetcherError(f"演职人员页获取失败: douban_id={douban_id}")
 
@@ -958,13 +993,37 @@ class CrawlerEngine:
         """
         from crawler.subtask import inject_subtask
 
+        task_data: dict = {
+            "douban_id": parent_data.get("douban_id", ""),
+            "movie_id": movie_id,
+            "movie_title": parent_data.get("movie_title", ""),
+        }
+
+        # 继承父任务的 Cookie 和代理（否则子任务会退化为游客+直连，容易被反爬）
+        parent_cookie = parent_data.get("cookie_id", "")
+        parent_proxy = parent_data.get("proxy_key", "")
+        if parent_cookie:
+            task_data["cookie_id"] = parent_cookie
+        if parent_proxy:
+            task_data["proxy_key"] = parent_proxy
+
+        # 安全兜底：父任务未携带 movie_title 时从 movies 表查询
+        if not task_data["movie_title"]:
+            try:
+                raw = self._movie_service.db.raw_mysql()
+                rows = await raw.execute_query(
+                    "SELECT title FROM movies WHERE id=%s LIMIT 1",
+                    (movie_id,),
+                )
+                if rows:
+                    task_data["movie_title"] = rows[0]["title"]
+            except Exception:
+                logger.warning("[导演子任务注入] 查询电影名失败 movie_id=%s", movie_id, exc_info=True)
+
         await inject_subtask(
             db=self._movie_service.db,
             task_type="director_crawl",
-            task_data={
-                "douban_id": parent_data.get("douban_id", ""),
-                "movie_id": movie_id,
-            },
+            task_data=task_data,
             admin_id=parent_data.get("admin_id", 0),
             parent_task_id=parent_data.get("id", 0),
         )
@@ -1090,6 +1149,110 @@ class CrawlerEngine:
                 f"总结{len(full_summary)}字, 标签{len(result.get('tags', []))}个"
             )
 
+            # 8. 同步写入风格标签表（新增逻辑，幂等，不影响主流程）
+            try:
+                style_dims = result.get('style_dimensions', {})
+                if not isinstance(style_dims, dict) or not style_dims:
+                    logger.info(
+                        f"[AI总结-内联|风格标签] movie_id={movie_id} AI 未返回 style_dimensions，跳过写入"
+                    )
+                    return
+
+                _DIM_ORDER = ('overall', 'plot', 'visual', 'narrative', 'pacing')
+                _DIM_CN = {'overall': '整体', 'plot': '剧情', 'visual': '画面', 'narrative': '叙事', 'pacing': '节奏'}
+
+                total_dims = sum(1 for k in _DIM_ORDER if isinstance(style_dims.get(k), dict))
+                logger.info(
+                    f"[AI总结-内联|风格标签] movie_id={movie_id} 开始写入，"
+                    f"AI 返回 {total_dims}/5 个维度数据"
+                )
+
+                written_tags = 0
+                skipped_tags = 0
+                written_links = 0
+
+                for dim_key in _DIM_ORDER:
+                    dim = style_dims.get(dim_key)
+                    if not isinstance(dim, dict):
+                        skipped_tags += 1
+                        logger.debug(
+                            f"[AI总结-内联|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} 维度缺失数据，跳过"
+                        )
+                        continue
+
+                    label = dim.get('label', '').strip()
+                    confidence = float(dim.get('confidence', 1.0))
+
+                    # 过滤无效标签
+                    if not label or label == '无显著特征':
+                        skipped_tags += 1
+                        logger.info(
+                            f"[AI总结-内联|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} → 无显著特征，跳过"
+                        )
+                        continue
+                    if confidence < 0.5:
+                        skipped_tags += 1
+                        logger.info(
+                            f"[AI总结-内联|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} → '{label}' "
+                            f"可信度={confidence:.1f}（低于0.5），跳过"
+                        )
+                        continue
+
+                    # 插入标签字典（幂等）
+                    logger.debug(
+                        f"[AI总结-内联|风格标签] movie_id={movie_id} "
+                        f"{_DIM_CN.get(dim_key, dim_key)} → 写入标签 '{label}' confidence={confidence:.1f}"
+                    )
+                    affected = await raw.execute_update(
+                        "INSERT IGNORE INTO movie_style_tag (name, dimension) VALUES (%s, %s)",
+                        (label, dim_key)
+                    )
+                    is_new_tag = (affected > 0)
+
+                    # 获取标签ID（新插入或已存在的）
+                    tag_rows = await raw.execute_query(
+                        "SELECT id FROM movie_style_tag WHERE name=%s AND dimension=%s LIMIT 1",
+                        (label, dim_key)
+                    )
+                    if tag_rows:
+                        tag_id = tag_rows[0]['id']
+                        written_tags += 1
+                        # 插入关联关系（幂等，保留最高置信度）
+                        await raw.execute_update(
+                            "INSERT INTO movie_style (movie_id, tag_id, confidence) VALUES (%s, %s, %s) "
+                            "ON DUPLICATE KEY UPDATE confidence = GREATEST(confidence, VALUES(confidence))",
+                            (movie_id, tag_id, confidence)
+                        )
+                        written_links += 1
+                        logger.info(
+                            f"[AI总结-内联|风格标签] movie_id={movie_id} ✅ "
+                            f"{_DIM_CN.get(dim_key, dim_key)}='{label}' "
+                            f"tag_id={tag_id} confidence={confidence:.1f}"
+                            f"{' (新标签，触发相似度检测)' if is_new_tag else ''}"
+                        )
+                        # 新标签 → 异步触发同维度相似度检测
+                        if is_new_tag:
+                            asyncio.create_task(
+                                _trigger_similarity_check(tag_id, dim_key)
+                            )
+                    else:
+                        logger.warning(
+                            f"[AI总结-内联|风格标签] movie_id={movie_id} "
+                            f"标签 '{label}'({_DIM_CN.get(dim_key, dim_key)}) "
+                            f"INSERT IGNORE 后查询失败，可能被并发删除"
+                        )
+
+                logger.info(
+                    f"[AI总结-内联|风格标签] movie_id={movie_id} 写入完成: "
+                    f"movie_style_tag +{written_tags} 跳过{skipped_tags} | "
+                    f"movie_style +{written_links}"
+                )
+            except Exception as e:
+                logger.warning(f"[AI总结-内联|风格标签] movie_id={movie_id} 写入异常: {e}", exc_info=True)
+
         except Exception as e:
             logger.error(f"[AI总结-内联] movie_id={movie_id} 异常: {e}", exc_info=True)
             try:
@@ -1103,13 +1266,29 @@ class CrawlerEngine:
     async def _inject_ai_wordcloud(self, movie_id: int, parent_task_id: int = 0) -> None:
         """
         comment_crawl 完成后自动提交 ai_wordcloud 任务。
+
+        自动从 movies 表查询 douban_id 和 title 写入 task_data，
+        保证管理端历史记录和实时队列中能展示完整的电影信息。
         """
         from crawler.subtask import inject_subtask
+
+        task_data: dict = {"movie_id": movie_id}
+        try:
+            raw = self._movie_service.db.raw_mysql()
+            rows = await raw.execute_query(
+                "SELECT douban_id, title FROM movies WHERE id=%s LIMIT 1",
+                (movie_id,),
+            )
+            if rows:
+                task_data["douban_id"] = rows[0].get("douban_id", "")
+                task_data["movie_title"] = rows[0].get("title", "")
+        except Exception:
+            logger.warning("[AI词云注入] 查询电影元数据失败 movie_id=%s", movie_id, exc_info=True)
 
         await inject_subtask(
             db=self._movie_service.db,
             task_type="ai_wordcloud",
-            task_data={"movie_id": movie_id},
+            task_data=task_data,
             parent_task_id=parent_task_id,
         )
 
@@ -1141,8 +1320,18 @@ class CrawlerEngine:
                 (movie_id,),
             )
             if summary_check and len(summary_check) > 0:
-                logger.debug(f"[AI总结] movie_id={movie_id} 已生成过总结，跳过触发")
-                return
+                # 回填检查：总结已完成但 movie_style 可能为空（旧版无风格标签写入）
+                style_check = await raw.execute_query(
+                    "SELECT 1 FROM movie_style WHERE movie_id=%s LIMIT 1",
+                    (movie_id,),
+                )
+                if style_check and len(style_check) > 0:
+                    logger.debug(f"[AI总结] movie_id={movie_id} 已有总结+风格标签，跳过触发")
+                    return
+                else:
+                    logger.info(
+                        f"[AI总结-回填] movie_id={movie_id} 总结存在但风格标签缺失，注入回填任务"
+                    )
 
             # 2. 统计已完成的长评数量
             count_result = await raw.execute_query(
@@ -1157,10 +1346,22 @@ class CrawlerEngine:
             if done_count >= cfg.ai_summary_min_reviews:
                 from crawler.subtask import inject_subtask
 
+                task_data: dict = {"movie_id": movie_id}
+                try:
+                    meta_rows = await raw.execute_query(
+                        "SELECT douban_id, title FROM movies WHERE id=%s LIMIT 1",
+                        (movie_id,),
+                    )
+                    if meta_rows:
+                        task_data["douban_id"] = meta_rows[0].get("douban_id", "")
+                        task_data["movie_title"] = meta_rows[0].get("title", "")
+                except Exception:
+                    logger.warning("[AI总结触发] 查询电影元数据失败 movie_id=%s", movie_id, exc_info=True)
+
                 await inject_subtask(
                     db=self._movie_service.db,
                     task_type="ai_review_summary",
-                    task_data={"movie_id": movie_id},
+                    task_data=task_data,
                     admin_id=admin_id,
                     parent_task_id=parent_task_id,
                 )
@@ -1198,8 +1399,22 @@ class CrawlerEngine:
                 (movie_id,),
             )
             if existing and len(existing) > 0:
-                logger.info(f"[AI总结] movie_id={movie_id} 已存在总结，跳过处理")
-                return
+                # 回填检查：summary 已存在但 movie_style 可能为空
+                #   场景：旧版 AI 生成了 summary 但没写 movie_style_tag/movie_style
+                #         重新爬取后需要补写风格标签
+                style_check = await raw.execute_query(
+                    "SELECT COUNT(1) AS cnt FROM movie_style WHERE movie_id=%s",
+                    (movie_id,),
+                )
+                has_style = style_check and style_check[0].get("cnt", 0) > 0
+                if has_style:
+                    logger.info(f"[AI总结] movie_id={movie_id} 已存在总结+风格标签，跳过处理")
+                    return
+                else:
+                    logger.info(
+                        f"[AI总结-回填] movie_id={movie_id} 总结已存在但风格标签缺失，"
+                        f"将重新生成以回填 movie_style_tag / movie_style"
+                    )
             
             # 2. 先插入一条pending记录，防止重复任务并发处理
             await raw.execute_update(
@@ -1253,6 +1468,119 @@ class CrawlerEngine:
                 "WHERE movie_id=%s",
                 (full_summary, tags, movie_id),
             )
+
+            # ⑥ 同步写入风格标签表（新增逻辑，幂等，不影响主流程）
+            await self._emit_stage(task_str, "🎨 正在写入风格标签...")
+            try:
+                style_dims = result.get('style_dimensions', {})
+                if not isinstance(style_dims, dict) or not style_dims:
+                    logger.info(
+                        f"[AI总结|风格标签] movie_id={movie_id} AI 未返回 style_dimensions，跳过写入"
+                    )
+                    return
+
+                _DIM_ORDER = ('overall', 'plot', 'visual', 'narrative', 'pacing')
+                _DIM_CN = {'overall': '整体', 'plot': '剧情', 'visual': '画面', 'narrative': '叙事', 'pacing': '节奏'}
+
+                total_dims = sum(1 for k in _DIM_ORDER if isinstance(style_dims.get(k), dict))
+                await self._emit_stage(
+                    task_str,
+                    f"🎨 AI 返回 {total_dims}/5 个维度，开始写入 movie_style_tag / movie_style"
+                )
+                logger.info(
+                    f"[AI总结|风格标签] movie_id={movie_id} 开始写入，"
+                    f"AI 返回 {total_dims}/5 个维度数据"
+                )
+
+                written_tags = 0
+                skipped_tags = 0
+                written_links = 0
+
+                for dim_key in _DIM_ORDER:
+                    dim = style_dims.get(dim_key)
+                    if not isinstance(dim, dict):
+                        skipped_tags += 1
+                        logger.debug(
+                            f"[AI总结|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} 维度缺失数据，跳过"
+                        )
+                        continue
+
+                    label = dim.get('label', '').strip()
+                    confidence = float(dim.get('confidence', 1.0))
+
+                    # 过滤无效标签
+                    if not label or label == '无显著特征':
+                        skipped_tags += 1
+                        logger.info(
+                            f"[AI总结|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} → 无显著特征，跳过"
+                        )
+                        continue
+                    if confidence < 0.5:
+                        skipped_tags += 1
+                        logger.info(
+                            f"[AI总结|风格标签] movie_id={movie_id} "
+                            f"{_DIM_CN.get(dim_key, dim_key)} → '{label}' "
+                            f"可信度={confidence:.1f}（低于0.5），跳过"
+                        )
+                        continue
+
+                    # 插入标签字典（幂等）
+                    logger.debug(
+                        f"[AI总结|风格标签] movie_id={movie_id} "
+                        f"{_DIM_CN.get(dim_key, dim_key)} → 写入标签 '{label}' confidence={confidence:.1f}"
+                    )
+                    affected = await raw.execute_update(
+                        "INSERT IGNORE INTO movie_style_tag (name, dimension) VALUES (%s, %s)",
+                        (label, dim_key)
+                    )
+                    is_new_tag = (affected > 0)
+
+                    # 获取标签ID（新插入或已存在的）
+                    tag_rows = await raw.execute_query(
+                        "SELECT id FROM movie_style_tag WHERE name=%s AND dimension=%s LIMIT 1",
+                        (label, dim_key)
+                    )
+                    if tag_rows:
+                        tag_id = tag_rows[0]['id']
+                        written_tags += 1
+                        # 插入关联关系（幂等，保留最高置信度）
+                        await raw.execute_update(
+                            "INSERT INTO movie_style (movie_id, tag_id, confidence) VALUES (%s, %s, %s) "
+                            "ON DUPLICATE KEY UPDATE confidence = GREATEST(confidence, VALUES(confidence))",
+                            (movie_id, tag_id, confidence)
+                        )
+                        written_links += 1
+                        logger.info(
+                            f"[AI总结|风格标签] movie_id={movie_id} ✅ "
+                            f"{_DIM_CN.get(dim_key, dim_key)}='{label}' "
+                            f"tag_id={tag_id} confidence={confidence:.1f}"
+                            f"{' (新标签，触发相似度检测)' if is_new_tag else ''}"
+                        )
+                        # 新标签 → 异步触发同维度相似度检测
+                        if is_new_tag:
+                            asyncio.create_task(
+                                _trigger_similarity_check(tag_id, dim_key)
+                            )
+                    else:
+                        logger.warning(
+                            f"[AI总结|风格标签] movie_id={movie_id} "
+                            f"标签 '{label}'({_DIM_CN.get(dim_key, dim_key)}) "
+                            f"INSERT IGNORE 后查询失败，可能被并发删除"
+                        )
+
+                await self._emit_stage(
+                    task_str,
+                    f"🎨 风格标签写入完成: movie_style_tag +{written_tags} 跳过{skipped_tags} | movie_style +{written_links}"
+                )
+                logger.info(
+                    f"[AI总结|风格标签] movie_id={movie_id} 写入完成: "
+                    f"movie_style_tag +{written_tags} 跳过{skipped_tags} | "
+                    f"movie_style +{written_links}"
+                )
+            except Exception as e:
+                logger.warning(f"[AI总结|风格标签] movie_id={movie_id} 写入异常: {e}", exc_info=True)
             
             logger.info(f"[AI总结] movie_id={movie_id} 生成成功，已保存到数据库")
             
@@ -1309,11 +1637,11 @@ class CrawlerEngine:
                 )
 
             import json as _json
-            from datetime import datetime, timezone
+            from datetime import datetime
             data_wc = {
                 "words": words,
                 "total_words": len(words),
-                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S+08:00"),
             }
             await self._emit_stage(task_str, "💾 正在缓存词云...")
             await redis_set(

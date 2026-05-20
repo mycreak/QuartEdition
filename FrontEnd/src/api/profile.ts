@@ -36,7 +36,28 @@ export const uploadAvatar = (file: File) => {
   })
 }
 
+/**
+ * 上传片单封面
+ * @param file - 封面文件对象
+ */
+export const uploadListCover = (file: File) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return client.post<{
+    success: boolean
+    message: string
+    data: {
+      cover_url: string
+    }
+  }>("/admin/upload/list-cover", formData, {
+    headers: {
+      "Content-Type": "multipart/form-data"
+    }
+  })
+}
+
 export default {
   updateProfile,
-  uploadAvatar
+  uploadAvatar,
+  uploadListCover
 }

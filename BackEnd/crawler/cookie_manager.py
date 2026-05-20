@@ -297,7 +297,7 @@ class CookieManager:
         def _ts_iso(ts: float) -> str:
             if not ts or ts <= 0:
                 return ""
-            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(ts).isoformat()
 
         return [
             {

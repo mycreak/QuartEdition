@@ -30,7 +30,7 @@ SQLS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     """CREATE TABLE IF NOT EXISTS user_permissions (
-      user_id         INT         NOT NULL,
+      user_id         BIGINT         NOT NULL,
       permission_code VARCHAR(32) NOT NULL,
       granted_by      INT         NOT NULL DEFAULT 0,
       granted_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -57,8 +57,7 @@ SQLS = [
       INDEX idx_category (task_category),
       INDEX idx_task_type (task_type),
       INDEX idx_created_at (created_at),
-      INDEX idx_parent (parent_task_id),
-      CONSTRAINT fk_th_admin FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+      INDEX idx_parent (parent_task_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     """INSERT INTO permissions (code, name, description) VALUES

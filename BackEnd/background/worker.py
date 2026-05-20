@@ -162,14 +162,16 @@ class BrowserPool:
                     "cooldown_remaining": round(until - now, 1),
                 })
 
+        # busy_count 统一用 _worker_current_task 长度
+        busy_count = len(self._worker_current_task)
         return {
             "alive": alive,
             "expected": self._worker_count,
             "dead": dead,
             "stuck": stuck,
             "crashed_total": self._worker_crashed_count,
-            "busy_count": self._busy_counter,
-            "idle_count": self._worker_count - self._busy_counter - self.cooldown_count,
+            "busy_count": busy_count,
+            "idle_count": self._worker_count - busy_count - self.cooldown_count,
             "cooldown_count": self.cooldown_count,
             "busy_since": dict(self._busy_since),
             "cooldown_info": cooldown_info,
@@ -346,9 +348,10 @@ class BrowserPool:
                 )
 
             finally:
+                # 先 pop _worker_current_task，和 busy_count 统计保持一致
+                self._worker_current_task.pop(worker_id, None)
                 self._busy_counter -= 1
                 self._busy_since.pop(worker_id, None)
-                self._worker_current_task.pop(worker_id, None)
                 self.task_queue.task_done()
 
             # Worker 执行后随机休息 — 5 Worker 自然错峰

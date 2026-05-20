@@ -62,6 +62,25 @@ async def submit_task():
         task_data["cookie_id"] = cookie_id
         task_data["proxy_key"] = proxy_key
 
+        # 尝试补全电影名（优先 movies 表，其次 douban_ids 表）
+        try:
+            raw = current_app.services.movie_service.db.raw_mysql()
+            rows = await raw.execute_query(
+                "SELECT title FROM movies WHERE douban_id=%s LIMIT 1",
+                (douban_id,),
+            )
+            if rows:
+                task_data["movie_title"] = rows[0]["title"]
+            else:
+                rows = await raw.execute_query(
+                    "SELECT title FROM douban_ids WHERE douban_id=%s LIMIT 1",
+                    (douban_id,),
+                )
+                if rows:
+                    task_data["movie_title"] = rows[0]["title"]
+        except Exception:
+            pass  # 查询失败不阻塞任务提交
+
     elif task_type in ("review_crawl", "review_body_crawl", "comment_crawl"):
         douban_id = (body.get("douban_id") or body.get("subject_id") or "").strip()
         if not douban_id:
@@ -77,6 +96,25 @@ async def submit_task():
         movie_id = body.get("movie_id")
         if movie_id is not None:
             task_data["movie_id"] = movie_id
+
+        # 尝试补全电影名（优先 movies 表，其次 douban_ids 表）
+        try:
+            raw = current_app.services.movie_service.db.raw_mysql()
+            rows = await raw.execute_query(
+                "SELECT title FROM movies WHERE douban_id=%s LIMIT 1",
+                (douban_id,),
+            )
+            if rows:
+                task_data["movie_title"] = rows[0]["title"]
+            else:
+                rows = await raw.execute_query(
+                    "SELECT title FROM douban_ids WHERE douban_id=%s LIMIT 1",
+                    (douban_id,),
+                )
+                if rows:
+                    task_data["movie_title"] = rows[0]["title"]
+        except Exception:
+            pass
 
         if task_type == "review_crawl":
             task_data["url"] = f"https://movie.douban.com/subject/{douban_id}/reviews"
@@ -148,6 +186,18 @@ async def submit_task():
         proxy_key = body.get("proxy_key", "").strip()
         task_data["cookie_id"] = cookie_id
         task_data["proxy_key"] = proxy_key
+
+        # 尝试补全电影名（movie_id 必传，直接查 movies 表）
+        try:
+            raw = current_app.services.movie_service.db.raw_mysql()
+            rows = await raw.execute_query(
+                "SELECT title FROM movies WHERE id=%s LIMIT 1",
+                (movie_id,),
+            )
+            if rows:
+                task_data["movie_title"] = rows[0]["title"]
+        except Exception:
+            pass
 
     task_json = json.dumps(task_data, ensure_ascii=False)
 

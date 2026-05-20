@@ -17,11 +17,7 @@
         text-color="#ccc"
         active-text-color="#fff"
       >
-        <el-menu-item index="/" class="back-home">
-          <template #title>< 返回首页</template>
-        </el-menu-item>
 
-        <el-divider class="menu-divider" />
 
         <el-menu-item index="/admin" v-if="authStore.checkPermission('system:monitor')">
           <el-icon><Monitor /></el-icon>
@@ -73,7 +69,7 @@
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Monitor, VideoCamera, ChatLineRound, SetUp, Collection, User, Tools, Fold, Expand, ArrowLeft } from '@element-plus/icons-vue'
+import { Monitor, VideoCamera, ChatLineRound, SetUp, Collection, User, Tools, Fold, Expand } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -100,13 +96,12 @@ const activeMenu = computed(() => {
 .sidebar-title { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .collapse-btn { cursor: pointer; color: #ccc; transition: color 0.2s; flex-shrink: 0; }
 .collapse-btn:hover { color: #fff; }
-.admin-content { background: #f5f5f5; padding: 24px; }
+
+.admin-content {
+  background: #f5f5f5;
+  padding: 24px;
+  min-height: calc(100vh - 56px);
+}
 .el-menu { border-right: none; }
 .el-menu-item.is-active { background: rgba(255, 255, 255, 0.1) !important; }
-
-.back-home { margin-bottom: 4px; }
-.back-home:hover { background: rgba(255, 255, 255, 0.08) !important; }
-.back-home .el-icon { color: #67c23a; }
-
-.menu-divider { margin: 4px 12px; border-color: rgba(255, 255, 255, 0.1); }
 </style>

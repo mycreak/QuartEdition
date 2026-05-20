@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading" class="admin-movie-detail">
     <div class="detail-nav">
-      <el-button text @click="$router.push('/admin/movies')">← 返回电影列表</el-button>
+      <el-button text @click="handleBack">← {{ fromPlaylistEdit ? '返回片单编辑' : '返回电影列表'}}</el-button>
       <el-button text @click="$router.push(`/movies/${movieId}`)" v-if="detail && detail.movie.is_published">查看用户端 →</el-button>
     </div>
 
@@ -336,6 +336,18 @@ const roleTypes = ['director', 'actor', 'writer', 'producer', 'art_director', 'm
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+
+// 判断是否从片单编辑页面来
+const fromPlaylistEdit = computed(() => route.query.from === 'playlist-edit')
+
+// 返回处理
+const handleBack = () => {
+  if (fromPlaylistEdit.value) {
+    router.back()
+  } else {
+    router.push('/admin/movies')
+  }
+}
 
 // 过滤已经关联的类型，避免重复添加
 const filteredTypeOptions = computed(() => {

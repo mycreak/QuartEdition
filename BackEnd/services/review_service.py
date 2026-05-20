@@ -112,6 +112,37 @@ class ReviewService:
         await self._attach_movie_titles(items)
         return items, total
 
+    async def get_comments_by_user_id(
+        self, user_id: int, page: int = 1, page_size: int = 20
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        查询某用户发表的全部评论（用于个人中心）。
+
+        输入: user_id, page, page_size
+        输出: (items, total)，items 含 comment_id, movie_id, text, rating, date
+        """
+        original_type = self.db._get_type()
+        self.db.set_database("mongodb")
+        try:
+            items, total = await self.db.find(
+                table="comments",
+                conditions={"user_id": user_id, "is_published": True},
+                projection={
+                    "_id": 1, "movie_id": 1, "text": 1, "rating": 1, "date": 1,
+                },
+                sort=[("crawled_at", -1)],
+                page=page,
+                page_size=page_size,
+            )
+        finally:
+            self.db._set_type(original_type)
+
+        for item in items:
+            if "comment_id" not in item or not item["comment_id"]:
+                item["comment_id"] = item.get("_id", "")
+
+        return items, total
+
     async def list_comments(
         self,
         movie_ids: Optional[List[int]] = None,

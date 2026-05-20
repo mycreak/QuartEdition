@@ -39,16 +39,37 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 REVIEW_SUMMARY_SYSTEM_PROMPT = """你是一个专业的电影评论分析助手。用户会提供一部电影的若干条观众长评，请你：
+
 1. 综合所有长评的核心观点，生成一段 300 字以内的整体总结。
-2. 提取 5-10 个关键词标签，概括观众的主要评价维度（如"剧情紧凑""演技在线""画面精美""节奏拖沓"等）。
+2. 从以下 5 个维度分析这部电影的内容风格，每个维度输出一个标签词和可信度：
+
+维度说明：
+  overall（整体风格） — 这部电影给观众的整体感受，如 黑暗压抑、轻松治愈、史诗感、荒诞、浪漫
+  plot（剧情风格）   — 剧情层面的特征，如 反转密集、非线性叙事、真实事件改编、多线交织
+  visual（画面风格）  — 视觉层面的特征，如 冷色调、手持摄影、长镜头、色彩饱和、极简构图
+  narrative（叙事风格）— 叙事手法的特征，如 第一人称、倒叙、多视角、留白、碎片化
+  pacing（节奏风格）   — 节奏层面的特征，如 前松后紧、全程紧绷、缓慢铺陈、循序渐进
+
+confidence 规则（你对判断的确信程度）：
+  - 0.9 以上：评论中有大量直接证据支持该判断
+  - 0.7～0.9：评论中有明显倾向指向该判断
+  - 0.5～0.7：评论中有模糊线索，推测出该判断
+  - 0.5 以下：证据不足 → label 填 "无显著特征"，confidence 填实际分值
 
 你必须以严格的 JSON 格式返回结果，不要添加任何额外文字：
 {
   "full_summary": "300字以内的综合总结",
-  "tags": ["标签1", "标签2", "标签3", ...]
+  "tags": ["标签1", "标签2", "标签3"],
+  "style_dimensions": {
+    "overall":   { "label": "黑暗压抑", "confidence": 0.9 },
+    "plot":      { "label": "非线性叙事", "confidence": 0.8 },
+    "visual":    { "label": "冷色调", "confidence": 0.7 },
+    "narrative": { "label": "多线交织", "confidence": 0.7 },
+    "pacing":    { "label": "前松后紧", "confidence": 0.6 }
+  }
 }"""
 
-REVIEW_SUMMARY_USER_PROMPT_TPL = """以下是某部电影的部分观众长评，请综合这些内容生成总结和标签：
+REVIEW_SUMMARY_USER_PROMPT_TPL = """以下是某部电影的部分观众长评，请综合这些内容，从整体、剧情、画面、叙事、节奏 5 个维度分析风格：
 
 {reviews_text}"""
 
@@ -71,6 +92,26 @@ COMMENT_WORDCLOUD_SYSTEM_PROMPT = """你是一个专业的电影短评分析助�
 COMMENT_WORDCLOUD_USER_PROMPT_TPL = """以下是某部电影的部分观众短评，请从中提取高频关键词和词组用于生成词云：
 
 {comments_text}"""
+
+STYLE_TAG_COMPARE_SYSTEM_PROMPT = """你是一个电影风格标签分析助手。
+用户会提供两个风格标签，请判断它们的语义相似度。
+
+规则：
+  - 两个标签属于同一维度（整体/剧情/画面/叙事/节奏）
+  - 每个标签会附带一部出现该标签的电影名作为上下文
+  - 返回一个 0-100 的相似度数字
+  - 90以上：几乎同义，如"黑暗压抑"vs"阴郁沉重"
+  - 80-90：高度相关，如"非线性叙事"vs"碎片化叙事"
+  - 70-80：部分重叠
+  - 70以下：基本无关
+
+你必须以严格的 JSON 格式返回结果，不要添加任何额外文字：
+{"score": 85}"""
+
+STYLE_TAG_COMPARE_USER_PROMPT_TPL = """比较两个电影风格标签的语义相似度（0-100）：
+  - 维度：{dimension_cn}
+  - 标签A："{tag_a}"（出现于电影《{movie_a}》）
+  - 标签B："{tag_b}"（出现于电影《{movie_b}》）"""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -128,6 +169,51 @@ class BaseAIClient:
     # ═══════════════════════════════════════
     # 模板方法 — 统一重试 / 快照 / 日志
     # ═══════════════════════════════════════
+
+    @staticmethod
+    def _classify_network_error(exc: Exception) -> str:
+        """
+        将网络异常分类为可读标签。
+
+        输入：aiohttp / asyncio 异常对象
+        输出：分类字符串，格式 "类别|异常类型: 消息摘要"
+
+        分类规则（按优先级从高到低）：
+            asyncio.TimeoutError            → timeout（str() 为空，必须靠类型区分）
+            ClientConnectorError + DNS      → dns_failure
+            ClientConnectorError + 连接拒绝 → connection_refused
+            ClientConnectorError + 其他     → connection_error
+            ServerTimeoutError              → server_timeout
+            ClientOSError                   → os_error
+            其他 aiohttp.ClientError         → network
+            完全未知                         → unknown
+        """
+        exc_name = type(exc).__name__
+        try:
+            from aiohttp import ClientConnectorError, ServerTimeoutError, ClientOSError, ClientError
+        except ImportError:
+            return f"network|{exc_name}: {str(exc)[:200] or '(无消息)'}"
+
+        if isinstance(exc, ClientConnectorError):
+            msg = str(exc)
+            if "getaddrinfo failed" in msg:
+                return f"dns_failure|{exc_name}: {msg[:200]}"
+            if any(kw in msg for kw in ("Connection refused", "Cannot connect to host", "Connection reset")):
+                return f"connection_refused|{exc_name}: {msg[:200]}"
+            os_err = getattr(exc, 'os_error', None)
+            os_detail = f" errno={os_err.errno} strerror={os_err.strerror}" if os_err else ""
+            return f"connection_error|{exc_name}: {msg[:200]}{os_detail}"
+
+        if isinstance(exc, ServerTimeoutError):
+            return f"server_timeout|{exc_name}: {str(exc)[:200]}"
+
+        if isinstance(exc, ClientOSError):
+            return f"os_error|{exc_name}: {str(exc)[:200]}"
+
+        if isinstance(exc, ClientError):
+            return f"network|{exc_name}: {str(exc)[:200]}"
+
+        return f"unknown|{exc_name}: {str(exc)[:200] or '(无消息)'}"
 
     async def _call(
         self,
@@ -205,10 +291,11 @@ class BaseAIClient:
                 await asyncio.sleep(1)
                 continue
             except Exception as e:
-                snapshot["last_error"] = str(e)
+                category = self._classify_network_error(e)
+                snapshot["last_error"] = category
                 logger.error(
-                    f"[AI服务:{self.provider_name}] 调用异常 attempt=%s/%s: %s",
-                    attempt + 1, self.max_retries, e,
+                    f"[AI服务:{self.provider_name}] 调用异常 attempt=%s/%s | %s",
+                    attempt + 1, self.max_retries, category,
                 )
                 await asyncio.sleep(2 ** attempt)
                 continue
@@ -231,13 +318,13 @@ class BaseAIClient:
         max_chars_per_review: int = 1000,
     ) -> Optional[Dict]:
         """
-        基于长评列表生成综合总结 + 标签（所有服务商通用）。
+        基于长评列表生成综合总结 + 5维度风格分析（所有服务商通用）。
 
         输入：
             reviews: [{"content": "..." , "useful_count": 5}, ...]
             max_chars_per_review: 单条截断长度，-1 不截断
         输出：
-            {"full_summary": "...", "tags": ["...", ...]} | None
+            {"full_summary": "...", "tags": [...], "style_dimensions": {...}} | None
         """
         if not reviews:
             return None
@@ -261,6 +348,20 @@ class BaseAIClient:
         self.last_snapshot = snapshot
 
         if result and 'full_summary' in result and 'tags' in result:
+            # 新旧格式兼容：有 style_dimensions 时从中合并标签以保证一致性
+            dims = result.get('style_dimensions')
+            if isinstance(dims, dict):
+                _DIM_ORDER = ('overall', 'plot', 'visual', 'narrative', 'pacing')
+                dim_tags = []
+                for key in _DIM_ORDER:
+                    dim = dims.get(key)
+                    if isinstance(dim, dict):
+                        label = dim.get('label', '')
+                        if label and label != '无显著特征':
+                            dim_tags.append(label)
+                if dim_tags:
+                    result['tags'] = dim_tags
+                result['style_dimensions'] = dims
             result['_ai_snapshot'] = snapshot
             return result
 
@@ -303,6 +404,61 @@ class BaseAIClient:
         logger.warning(
             f"[AI服务:{self.provider_name}] 词云生成返回结构不完整或失败: %s",
             result,
+        )
+        return None
+
+    async def compare_style_tags(
+        self,
+        tag_a: str,
+        tag_b: str,
+        dimension: str,
+        movie_a: str,
+        movie_b: str,
+    ) -> Optional[float]:
+        """
+        比较两个同维度风格标签的语义相似度。
+
+        输入：
+            tag_a:     新标签名
+            tag_b:     已有标签名
+            dimension: 维度（overall/plot/visual/narrative/pacing）
+            movie_a:   新标签出现的电影名
+            movie_b:   已有标签出现的电影名
+        输出：
+            0-100 的相似度浮点数，失败返回 None
+        """
+        _DIM_CN = {
+            'overall': '整体', 'plot': '剧情',
+            'visual': '画面', 'narrative': '叙事', 'pacing': '节奏',
+        }
+        dimension_cn = _DIM_CN.get(dimension, dimension)
+
+        user_prompt = STYLE_TAG_COMPARE_USER_PROMPT_TPL.format(
+            dimension_cn=dimension_cn,
+            tag_a=tag_a,
+            tag_b=tag_b,
+            movie_a=movie_a,
+            movie_b=movie_b,
+        )
+
+        result, snapshot = await self._call(
+            STYLE_TAG_COMPARE_SYSTEM_PROMPT,
+            user_prompt,
+        )
+        self.last_snapshot = snapshot
+
+        if result is None:
+            return None
+
+        score = result.get('score') if isinstance(result, dict) else None
+        if score is not None:
+            try:
+                return max(0.0, min(100.0, float(score)))
+            except (ValueError, TypeError):
+                pass
+        logger.warning(
+            f"[AI服务:{self.provider_name}] 标签相似度解析失败: "
+            f"tag_a='{tag_a}' tag_b='{tag_b}' result={result}"
         )
         return None
 

@@ -25,11 +25,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
+from pathlib import Path as _Path
+
+_ENV_FILE = _Path(__file__).resolve().parent.parent / ".env"
+
+
 class Settings(BaseSettings):
     """QuartEdition 应用全局设置。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )

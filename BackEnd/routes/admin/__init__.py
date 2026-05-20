@@ -120,6 +120,8 @@ from .log_routes import log_bp
 from .infra_routes import infra_bp
 from .douban_id_routes import douban_id_bp
 from .debug_routes import debug_bp
+from .style_tag_routes import style_tag_bp
+from .playlist_routes import playlist_admin_bp
 
 admin_bp.register_blueprint(failure_bp)
 admin_bp.register_blueprint(task_bp)
@@ -132,6 +134,8 @@ admin_bp.register_blueprint(log_bp)
 admin_bp.register_blueprint(infra_bp)
 admin_bp.register_blueprint(douban_id_bp)
 admin_bp.register_blueprint(debug_bp)
+admin_bp.register_blueprint(style_tag_bp)
+admin_bp.register_blueprint(playlist_admin_bp)
 
 # 副作用导入（非直接引用）— 供 app.py 通过 `from routes.admin import init_task_failure_service` 访问
 from services.task_failure_service import init_task_failure_service

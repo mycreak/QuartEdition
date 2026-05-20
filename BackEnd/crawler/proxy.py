@@ -25,7 +25,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, Any
 
@@ -433,7 +433,7 @@ class ProxyPool:
             """将 Unix 时间戳（秒）转为 ISO 字符串，0 或 None 返回空串。"""
             if not ts or ts <= 0:
                 return ""
-            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(ts).isoformat()
 
         def _success_rate(sc: int, fc: int) -> float:
             """计算成功率（百分比，保留1位小数）"""

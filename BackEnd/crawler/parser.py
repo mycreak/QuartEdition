@@ -446,6 +446,9 @@ def parse_review_full(data: dict) -> Dict[str, Any]:
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     text = re.sub(r"\n\s*\n", "\n\n", text)
+    # 过滤豆瓣正文中的图片占位符（<图片1> / &lt;图片1&gt; 等）
+    text = re.sub(r"<图片\s*\d+>", "", text)
+    text = re.sub(r"\n\s*\n", "\n\n", text)
     text = text.strip()
 
     return {

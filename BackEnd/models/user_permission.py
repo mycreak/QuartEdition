@@ -22,6 +22,11 @@ VALID_PERMISSION_CODES = {
     "comment:read",
     "comment:manage",
     "system:monitor",
+    "infra:proxy:read",
+    "infra:proxy:manage",
+    "infra:cookie:read",
+    "infra:cookie:manage",
+    "infra:sensitive:read",
 }
 
 

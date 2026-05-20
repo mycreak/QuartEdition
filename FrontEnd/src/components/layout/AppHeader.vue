@@ -10,9 +10,9 @@
           v-if="authStore.isAdmin"
           text
           class="admin-entry"
-          @click="$router.push('/admin')"
+          @click="isAdminRoute ? $router.push('/') : $router.push('/admin')"
         >
-          管理后台
+          {{ isAdminRoute ? '返回用户端' : '管理后台' }}
         </el-button>
 
         <el-dropdown trigger="click">
@@ -33,7 +33,7 @@
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="$router.push('/profile')">
+              <el-dropdown-item @click="router.push(isAdminRoute ? '/admin/profile' : '/profile')">
                 <el-icon><User /></el-icon>
                 个人中心
               </el-dropdown-item>
@@ -59,12 +59,17 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { UserFilled, SwitchButton, User } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
+
+// 判断当前是否在管理后台页面
+const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
 function handleLogout(): void {
   authStore.logout()

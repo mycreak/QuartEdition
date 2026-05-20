@@ -191,6 +191,24 @@ CREATE TABLE IF NOT EXISTS movie_genres (
   PRIMARY KEY (movie_id, type_num)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ── 电影风格标签（AI 自动生成，5 维度: overall/plot/visual/narrative/pacing） ──
+CREATE TABLE IF NOT EXISTS movie_style_tag (
+  id        INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name      VARCHAR(32) NOT NULL COMMENT '风格名称',
+  dimension VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'overall|plot|visual|narrative|pacing',
+  UNIQUE KEY uk_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS movie_style (
+  movie_id   INT UNSIGNED  NOT NULL,
+  tag_id     INT UNSIGNED  NOT NULL,
+  confidence DECIMAL(2,1)  NOT NULL DEFAULT 1.0 COMMENT 'AI 可信度 0.0~1.0',
+  PRIMARY KEY (movie_id, tag_id),
+  INDEX idx_tag (tag_id),
+  CONSTRAINT fk_ms_movie FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ms_tag   FOREIGN KEY (tag_id)  REFERENCES movie_style_tag(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ── 版本历史表 ──
 CREATE TABLE IF NOT EXISTS movies_history (
   id         INT AUTO_INCREMENT PRIMARY KEY,

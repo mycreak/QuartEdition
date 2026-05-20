@@ -9,6 +9,20 @@ export interface AdminUser {
   is_active: boolean
 }
 
+export interface UserProfileData {
+  user: AdminUser
+  tags: UserProfileTag[]
+  total_score: number
+  tag_count: number
+}
+
+export interface UserProfileTag {
+  dimension: string
+  label: string
+  score: number
+  last_action: string | null
+}
+
 export const adminUsersApi = {
   list: () =>
     client.get<{ items: AdminUser[] }>('/admin/users'),
@@ -21,4 +35,7 @@ export const adminUsersApi = {
 
   assignPermissions: (userId: number, permission_codes: string[]) =>
     client.post<{ granted: number; total: number }>(`/admin/users/${userId}/permissions`, { permission_codes }),
+
+  profile: (userId: number) =>
+    client.get<UserProfileData>(`/admin/users/${userId}/profile`),
 }

@@ -288,6 +288,26 @@ def create_app():
         # ==================== 8c. 初始化认证服务 ====================
         init_auth_service(app.services.db)
 
+        # ==================== 8d. 初始化风格标签服务 ====================
+        from services.style_tag_service import init_style_tag_service
+        init_style_tag_service(app.services.db)
+
+        # ==================== 8e. 初始化 MovieContextService ====================
+        from services.movie_context import init_movie_context
+        init_movie_context(app.services.db)
+
+        # ==================== 8f. 初始化用户行为评分服务 ====================
+        from services.user_action_service import init_user_action_service
+        init_user_action_service(app.services.db)
+
+        # ==================== 8g. 初始化推荐服务 ====================
+        from services.recommend_service import init_recommend_service
+        init_recommend_service(app.services.db)
+
+        # ==================== 8h. 初始化片单服务 ====================
+        from services.playlist_service import init_playlist_service
+        init_playlist_service(app.services.db)
+
         # ==================== 9. 初始化并启动系统状态监视器(Monitor) ====================
         await init_monitor(
             task_queue=app.task_queue,

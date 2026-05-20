@@ -69,8 +69,8 @@
         <el-pagination class="paginator" v-model:current-page="page" :total="total" :page-size="pageSize" background layout="total, prev, pager, next" @current-change="fetchList" />
       </el-tab-pane>
 
-      <!-- 重名人员管理tab -->
-      <el-tab-pane label="重名人员管理" name="duplicate">
+      <!-- 重名人员审核tab -->
+      <el-tab-pane label="重名人员审核" name="duplicate">
         <div class="toolbar">
           <el-button type="primary" @click="refreshDuplicateList" :loading="duplicateLoading">刷新列表</el-button>
         </div>
@@ -97,6 +97,112 @@
         </el-table>
 
         <el-pagination class="paginator" v-model:current-page="duplicatePage" :total="duplicateTotal" :page-size="duplicatePageSize" background layout="total, prev, pager, next" @current-change="fetchDuplicateList" />
+      </el-tab-pane>
+
+      <!-- 标签审核 tab -->
+      <el-tab-pane label="标签审核" name="styleTags">
+        <div class="toolbar">
+          <el-button type="primary" @click="fetchStyleTags" :loading="styleTagLoading">刷新列表</el-button>
+        </div>
+
+        <el-table :data="styleTagItems" stripe v-loading="styleTagLoading">
+          <el-table-column prop="tag_id" label="ID" width="70" />
+          <el-table-column label="待合并标签" min-width="140">
+            <template #default="{ row }">
+              <el-tag size="small" type="warning">{{ row.tag_name }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="合并到" min-width="140">
+            <template #default="{ row }">
+              <el-tag size="small" type="success">{{ row.merged_to_tag_name }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="相似度" width="80">
+            <template #default="{ row }">{{ row.similarity ? (row.similarity * 100).toFixed(0) + '%' : '—' }}</template>
+          </el-table-column>
+          <el-table-column label="维度" width="80">
+            <template #default="{ row }">{{ row.dimension || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" type="success" link :loading="styleTagLoadingId === row.tag_id" @click="handleStyleTagMerge(row)">确认合并</el-button>
+              <el-button size="small" type="warning" link :loading="styleTagLoadingId === row.tag_id" @click="handleStyleTagReject(row)">拒绝</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="!styleTagLoading && !styleTagItems.length" style="text-align:center;color:#c0c4cc;padding:32px">暂无待审核标签</div>
+
+        <el-pagination
+          v-if="styleTagTotal > styleTagPageSize"
+          class="paginator"
+          v-model:current-page="styleTagPage"
+          :total="styleTagTotal"
+          :page-size="styleTagPageSize"
+          background
+          layout="total, prev, pager, next"
+          @current-change="fetchStyleTags"
+        />
+      </el-tab-pane>
+
+      <!-- 片单管理 tab -->
+      <el-tab-pane label="片单管理" name="playlists">
+        <div class="toolbar">
+          <el-input v-model="playlistSearch" placeholder="搜索片单标题..." clearable class="search-input" @keyup.enter="fetchPlaylists" @clear="fetchPlaylists" />
+          <el-select v-model="playlistPublishedFilter" placeholder="上下架" clearable class="filter-select" @change="fetchPlaylists">
+            <el-option label="已发布" :value="1" />
+            <el-option label="未发布" :value="0" />
+          </el-select>
+          <el-date-picker
+            v-model="playlistDateRange"
+            type="datetimerange"
+            range-separator="至"
+            start-placeholder="上架开始"
+            end-placeholder="上架结束"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            @change="fetchPlaylists"
+          />
+          <el-button type="primary" @click="openPlaylistCreate">新建片单</el-button>
+        </div>
+
+        <el-table :data="playlistItems" stripe v-loading="playlistLoading">
+          <el-table-column prop="id" label="ID" width="60" />
+          <el-table-column prop="title" label="标题" min-width="160" />
+          <el-table-column label="封面" width="80">
+            <template #default="{ row }">
+              <el-image v-if="row.cover_url" :src="row.cover_url" fit="cover" style="width:48px;height:32px;border-radius:4px" />
+              <span v-else class="c-gray">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="影片数" width="80">
+            <template #default="{ row }">{{ row.movie_ids?.length || 0 }}部</template>
+          </el-table-column>
+          <el-table-column prop="sort_order" label="排序" width="70" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.is_published ? 'success' : 'info'" size="small">
+                {{ row.is_published ? '已发布' : '未发布' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="160">
+            <template #default="{ row }">
+              <div class="time-cell">
+                <span v-if="row.publish_at" class="time-line">上架 {{ formatDateShort(row.publish_at) }}</span>
+                <span v-if="row.unpublish_at" class="time-line">下架 {{ formatDateShort(row.unpublish_at) }}</span>
+                <span v-if="!row.publish_at && !row.unpublish_at" class="c-gray">—</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="260" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" link @click="openPlaylistEdit(row)">编辑</el-button>
+              <el-button v-if="!row.is_published" size="small" type="success" link @click="handlePlaylistPublish(row)">发布</el-button>
+              <el-button v-else size="small" type="warning" link @click="handlePlaylistUnpublish(row)">下架</el-button>
+              <el-button size="small" type="danger" link @click="handlePlaylistDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </el-tab-pane>
     </el-tabs>
 
@@ -242,15 +348,85 @@
         <el-button type="primary" @click="submitMerge" :loading="mergeLoading" :disabled="keepPersonId === null">确认合并</el-button>
       </template>
     </el-dialog>
+
+    <!-- 片单编辑弹窗 -->
+    <el-dialog v-model="playlistDialogVisible" :title="playlistEditId ? '编辑片单' : '新建片单'" width="700px" destroy-on-close @closed="resetPlaylistForm">
+      <el-form :model="playlistForm" label-width="80px">
+        <el-form-item label="标题" required>
+          <el-input v-model="playlistForm.title" placeholder="片单标题" maxlength="128" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="playlistForm.description" type="textarea" :rows="3" placeholder="推荐语/介绍文字（可选）" maxlength="500" show-word-limit />
+        </el-form-item>
+        <el-form-item label="封面URL">
+          <el-input v-model="playlistForm.cover_url" placeholder="封面图片链接（TOS 上传，可选）" />
+        </el-form-item>
+
+        <el-form-item label="影片列表" required>
+          <div class="playlist-movie-ids">
+            <el-tag
+              v-for="(mid, idx) in playlistForm.movie_ids"
+              :key="idx"
+              closable
+              size="default"
+              class="movie-id-tag"
+              @close="removeMovieId(idx)"
+            >
+              <span class="tag-idx">{{ idx + 1 }}.</span>
+              {{ mid }}
+            </el-tag>
+            <el-input
+              v-model="newMovieIdInput"
+              placeholder="输入电影ID回车添加"
+              size="small"
+              style="width: 160px"
+              @keyup.enter="addMovieId"
+            />
+          </div>
+          <span class="form-hint" v-if="!playlistForm.movie_ids.length">至少添加1部电影</span>
+        </el-form-item>
+
+        <el-form-item label="排序">
+          <el-input-number v-model="playlistForm.sort_order" :min="0" :max="99" />
+          <span class="form-hint" style="margin-left:8px">越小越靠前</span>
+        </el-form-item>
+
+        <el-form-item label="定时上架">
+          <el-date-picker
+            v-model="playlistForm.publish_at"
+            type="datetime"
+            placeholder="上架时间（可选，留空=手动发布）"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+          />
+        </el-form-item>
+        <el-form-item label="定时下架">
+          <el-date-picker
+            v-model="playlistForm.unpublish_at"
+            type="datetime"
+            placeholder="下架时间（可选，留空=永不下架）"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="playlistDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="playlistSaving" @click="savePlaylist">
+          {{ playlistEditId ? '保存修改' : '创建' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { adminMoviesApi } from '@/api/admin/movies'
+import { adminPlaylistApi, type PlaylistFull } from '@/api/admin/playlists'
 import client from '@/api/client'
 import type { Movie } from '@/types/movie'
 
@@ -472,15 +648,222 @@ async function submitMerge() {
   }
 }
 
+function formatDateShort(iso: string): string {
+  if (!iso) return ''
+  return iso.replace('T', ' ').slice(0, 16)
+}
+
+// ==================== 标签审核方法 ====================
+interface StyleTagItem {
+  tag_id: number
+  tag_name: string
+  merged_to_tag_name: string
+  similarity: number | null
+  dimension: string | null
+}
+
+const styleTagItems = ref<StyleTagItem[]>([])
+const styleTagTotal = ref(0)
+const styleTagPage = ref(1)
+const styleTagPageSize = ref(20)
+const styleTagLoading = ref(false)
+const styleTagLoadingId = ref<number | null>(null)
+
+async function fetchStyleTags(p = 1) {
+  styleTagLoading.value = true
+  styleTagPage.value = p
+  try {
+    const res = await client.get<{ items: StyleTagItem[]; total: number }>('/admin/style-tags/pending', {
+      params: { page: p, page_size: styleTagPageSize.value }
+    })
+    styleTagItems.value = res.data.items
+    styleTagTotal.value = res.data.total
+  } catch {
+    ElMessage.error('加载待审核标签失败')
+  } finally {
+    styleTagLoading.value = false
+  }
+}
+
+async function handleStyleTagMerge(row: StyleTagItem) {
+  try {
+    await ElMessageBox.confirm(`确认将「${row.tag_name}」合并到「${row.merged_to_tag_name}」吗？`, '确认合并', { type: 'warning' })
+  } catch { return }
+
+  styleTagLoadingId.value = row.tag_id
+  try {
+    await client.post(`/admin/style-tags/${row.tag_id}/confirm-merge`)
+    ElMessage.success('已合并')
+    fetchStyleTags(styleTagPage.value)
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.error || '合并失败')
+  } finally {
+    styleTagLoadingId.value = null
+  }
+}
+
+async function handleStyleTagReject(row: StyleTagItem) {
+  try {
+    await ElMessageBox.confirm(`确认拒绝「${row.tag_name}」合并到「${row.merged_to_tag_name}」吗？`, '确认拒绝', { type: 'warning' })
+  } catch { return }
+
+  styleTagLoadingId.value = row.tag_id
+  try {
+    await client.post(`/admin/style-tags/${row.tag_id}/reject-merge`)
+    ElMessage.success('已拒绝')
+    fetchStyleTags(styleTagPage.value)
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.error || '操作失败')
+  } finally {
+    styleTagLoadingId.value = null
+  }
+}
+
+// ==================== 片单管理方法 ====================
+const playlistItems = ref<PlaylistFull[]>([])
+const playlistLoading = ref(false)
+const playlistPublishedFilter = ref<number | undefined>(undefined)
+const playlistSearch = ref('')
+const playlistDateRange = ref<[string, string] | null>(null)
+const playlistDialogVisible = ref(false)
+const playlistEditId = ref<number | null>(null)
+const playlistSaving = ref(false)
+const newMovieIdInput = ref('')
+
+const playlistForm = reactive({
+  title: '',
+  description: '',
+  cover_url: '',
+  movie_ids: [] as number[],
+  sort_order: 0,
+  publish_at: null as string | null,
+  unpublish_at: null as string | null,
+})
+
+function resetPlaylistForm() {
+  playlistForm.title = ''
+  playlistForm.description = ''
+  playlistForm.cover_url = ''
+  playlistForm.movie_ids = []
+  playlistForm.sort_order = 0
+  playlistForm.publish_at = null
+  playlistForm.unpublish_at = null
+  playlistEditId.value = null
+  newMovieIdInput.value = ''
+}
+
+function addMovieId() {
+  const val = parseInt(newMovieIdInput.value.trim(), 10)
+  if (!isNaN(val) && val > 0 && !playlistForm.movie_ids.includes(val)) {
+    playlistForm.movie_ids.push(val)
+  }
+  newMovieIdInput.value = ''
+}
+
+function removeMovieId(idx: number) {
+  playlistForm.movie_ids.splice(idx, 1)
+}
+
+async function fetchPlaylists() {
+  playlistLoading.value = true
+  try {
+    const res = await adminPlaylistApi.list({
+      keyword: playlistSearch.value || undefined,
+      is_published: playlistPublishedFilter.value,
+      publish_after: playlistDateRange.value?.[0] || undefined,
+      publish_before: playlistDateRange.value?.[1] || undefined,
+    })
+    playlistItems.value = res.data.items
+  } catch {
+    ElMessage.error('加载片单列表失败')
+  } finally {
+    playlistLoading.value = false
+  }
+}
+
+function openPlaylistCreate() {
+  router.push('/admin/playlists/new')
+}
+
+function openPlaylistEdit(row: PlaylistFull) {
+  router.push(`/admin/playlists/${row.id}/edit`)
+}
+
+async function savePlaylist() {
+  if (!playlistForm.title.trim()) { ElMessage.warning('请输入标题'); return }
+  if (!playlistForm.movie_ids.length) { ElMessage.warning('请至少添加1部电影'); return }
+
+  playlistSaving.value = true
+  try {
+    const body: any = {
+      title: playlistForm.title.trim(),
+      movie_ids: playlistForm.movie_ids,
+      description: playlistForm.description.trim(),
+      cover_url: playlistForm.cover_url.trim(),
+      sort_order: playlistForm.sort_order,
+      publish_at: playlistForm.publish_at || null,
+      unpublish_at: playlistForm.unpublish_at || null,
+    }
+    if (playlistEditId.value) {
+      await adminPlaylistApi.update(playlistEditId.value, body)
+      ElMessage.success('保存成功')
+    } else {
+      await adminPlaylistApi.create(body)
+      ElMessage.success('创建成功')
+    }
+    playlistDialogVisible.value = false
+    fetchPlaylists()
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.error || '操作失败')
+  } finally {
+    playlistSaving.value = false
+  }
+}
+
+async function handlePlaylistPublish(row: PlaylistFull) {
+  try {
+    await adminPlaylistApi.publish(row.id)
+    row.is_published = 1
+    ElMessage.success('已发布')
+  } catch { ElMessage.error('发布失败') }
+}
+
+async function handlePlaylistUnpublish(row: PlaylistFull) {
+  try {
+    await adminPlaylistApi.unpublish(row.id)
+    row.is_published = 0
+    ElMessage.success('已下架')
+  } catch { ElMessage.error('下架失败') }
+}
+
+async function handlePlaylistDelete(row: PlaylistFull) {
+  try {
+    await ElMessageBox.confirm(`确认删除片单「${row.title}」吗？删除不可恢复。`, '确认删除', { type: 'warning' })
+  } catch { return }
+  try {
+    await adminPlaylistApi.delete(row.id)
+    ElMessage.success('已删除')
+    fetchPlaylists()
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.error || '删除失败')
+  }
+}
+
 watch(keyword, () => {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => fetchList(1), 300)
 })
 
-// 监听tab切换，切换到重名管理时加载列表
+// 监听tab切换，切换到重名审核时加载列表
 watch(activeTab, (newVal) => {
   if (newVal === 'duplicate' && duplicateList.value.length === 0) {
     fetchDuplicateList()
+  }
+  if (newVal === 'styleTags' && styleTagItems.value.length === 0) {
+    fetchStyleTags()
+  }
+  if (newVal === 'playlists' && playlistItems.value.length === 0) {
+    fetchPlaylists()
   }
 })
 
@@ -512,4 +895,32 @@ onMounted(async () => {
 .genre-tag { margin-right: 4px; margin-bottom: 2px; }
 .c-gray { color: #c0c4cc; }
 .paginator { margin-top: 16px; justify-content: flex-end; }
+
+/* 片单管理 */
+.playlist-movie-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.movie-id-tag {
+  font-size: 13px;
+}
+.tag-idx {
+  color: #409eff;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.form-hint {
+  font-size: 12px;
+  color: #909399;
+}
+.time-cell {
+  font-size: 12px;
+  color: #606266;
+}
+.time-line {
+  display: block;
+  line-height: 1.5;
+}
 </style>

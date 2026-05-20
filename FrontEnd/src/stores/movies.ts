@@ -7,12 +7,14 @@ export const useMovieStore = defineStore('movies', () => {
   const movies = ref<Movie[]>([])
   const total = ref(0)
   const page = ref(1)
-  const pageSize = ref(12)
+  const pageSize = ref(15)
   const loading = ref(false)
   const error = ref('')
   const filters = reactive({
     keyword: '',
     type_num: undefined as number | undefined,
+    region: undefined as string | undefined,
+    year: undefined as number | undefined,
   })
   const intervalIds = ref<string[]>([])
 
@@ -25,6 +27,8 @@ export const useMovieStore = defineStore('movies', () => {
         keyword: filters.keyword || undefined,
         type_num: filters.type_num,
         interval_ids: intervalIds.value.length ? intervalIds.value.join(',') : undefined,
+        region: filters.region,
+        year: filters.year,
         page: p,
         page_size: pageSize.value,
       })
@@ -53,9 +57,11 @@ export const useMovieStore = defineStore('movies', () => {
     }
   }
 
-  function setFilter(keyword: string, type_num?: number, iids?: string[]): void {
+  function setFilter(keyword: string, type_num?: number, iids?: string[], region?: string, year?: number): void {
     filters.keyword = keyword
     filters.type_num = type_num
+    filters.region = region
+    filters.year = year
     if (iids !== undefined) {
       intervalIds.value = iids
     }
@@ -69,6 +75,8 @@ export const useMovieStore = defineStore('movies', () => {
   function clearFilters(): void {
     filters.keyword = ''
     filters.type_num = undefined
+    filters.region = undefined
+    filters.year = undefined
     intervalIds.value = []
   }
 

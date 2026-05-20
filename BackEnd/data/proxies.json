@@ -1,4 +1,16 @@
 {
   "version": 1,
-  "proxies": []
+  "proxies": [
+    {
+      "host": "182.131.27.109",
+      "port": 2018,
+      "username": "ydl77404173",
+      "password": "TZKnlVbk",
+      "source": "admin",
+      "added_at": 1779171239.201726,
+      "success_count": 0,
+      "fail_count": 0,
+      "region": ""
+    }
+  ]
 }

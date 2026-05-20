@@ -805,6 +805,34 @@ function resetTaskForm() {
   resetReviewFilters()
 }
 
+// 重置任务表单但保留任务类型
+function resetTaskFormKeepType() {
+  const currentType = taskForm.type
+  // 重置除任务类型外的所有字段
+  taskForm.type_num = 11
+  taskForm.interval_id = '100:90'
+  taskForm.douban_id = ''
+  taskForm.pages = 2
+  taskForm.scrape_douban_id = ''
+  taskForm.scrape_cookie_id = ''
+  taskForm.scrape_proxy_key = ''
+  taskForm.review_cookie_id = ''
+  taskForm.review_proxy_key = ''
+  taskForm.comment_cookie_id = ''
+  taskForm.comment_proxy_key = ''
+  taskForm.selected_movie_id = null
+  // 重置选中的电影名称
+  selectedMovieTitle.value = ''
+  // 清空待爬长评相关数据
+  pendingReviews.value = []
+  pendingReviewsTotal.value = 0
+  selectedReviewIds.value = []
+  // 重置筛选参数
+  resetReviewFilters()
+  // 恢复任务类型
+  taskForm.type = currentType
+}
+
 async function submitTask() {
   if (taskForm.type === 'review_body_crawl' && selectedReviewIds.value.length > 0) {
     // 批量提交模式
@@ -847,6 +875,7 @@ async function submitTask() {
     ElMessage.success(`任务已提交 (${taskForm.type})`)
     await fetchQueue()
     await fetchProgress()
+    resetTaskFormKeepType()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '提交失败')
   } finally { submitting.value = false }
@@ -914,16 +943,15 @@ async function submitBatchReviewBodyTasks() {
     await fetchProgress()
     // 刷新待爬列表
     fetchPendingReviews(pendingReviewsPage.value)
+    resetTaskFormKeepType()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '批量提交失败')
   } finally {
     submitting.value = false
-    // 提交成功后重置表单
-    resetTaskForm()
   }
 }
 
-function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取', director_crawl: '参演职员爬取', ai_wordcloud: 'AI词云生成' }; return m[t] || t }
+function typeLabel(t: string) { const m: Record<string, string> = { movie_crawl: '电影抓取', movie_scrape_task: '详情爬取', review_crawl: '长评列表', review_body_crawl: '长评正文', comment_crawl: '短评抓取', director_crawl: '参演职员爬取', ai_wordcloud: 'AI词云生成', ai_review_summary: 'AI评论总结' }; return m[t] || t }
 function statusLabel(s: string) { const m: Record<string, string> = { submitted: '已提交', running: '执行中', done: '已完成', failed: '失败' }; return m[s] || s }
 function statusColor(s: string) { const m: Record<string, string> = { submitted: 'info', running: 'warning', done: 'success', failed: 'danger' }; return m[s] || 'info' }
 function paramsSummary(row: any) {
@@ -933,6 +961,7 @@ function paramsSummary(row: any) {
     return `${typeName} | ${params.interval_id}`
   } else if (row.task_type === 'review_crawl' || row.task_type === 'comment_crawl') {
     const parts: string[] = []
+    if (params.movie_title) parts.push(params.movie_title)
     if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
     if (params.pages) parts.push(`${params.pages}页`)
     if (params.cookie_id) parts.push(`cookie: ${params.cookie_id}`)
@@ -940,15 +969,26 @@ function paramsSummary(row: any) {
     return parts.join(' | ')
   } else if (row.task_type === 'review_body_crawl') {
     const parts: string[] = []
+    if (params.movie_title) parts.push(params.movie_title)
     if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
     if (params.cookie_id) parts.push(`cookie: ${params.cookie_id}`)
     if (params.proxy_key) parts.push(`proxy: ${params.proxy_key}`)
     return parts.join(' | ')
   } else if (row.task_type === 'movie_scrape_task' || row.task_type === 'director_crawl' || row.task_type === 'movie_detail_crawl') {
     const parts: string[] = []
-    if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
+    if (params.movie_title) {
+      parts.push(params.movie_title)
+      if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
+    } else if (params.douban_id) {
+      parts.push(`douban_id: ${params.douban_id}`)
+    }
     if (params.cookie_id) parts.push(`cookie: ${params.cookie_id}`)
     if (params.proxy_key) parts.push(`proxy: ${params.proxy_key}`)
+    return parts.join(' | ')
+  } else if (row.task_type === 'ai_wordcloud' || row.task_type === 'ai_review_summary') {
+    const parts: string[] = []
+    if (params.douban_id) parts.push(`douban_id: ${params.douban_id}`)
+    if (params.movie_title) parts.push(params.movie_title)
     return parts.join(' | ')
   }
   return ''

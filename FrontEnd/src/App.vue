@@ -18,20 +18,17 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { wsManager } from '@/api/ws'
 
+const AUTH_ROUTES = ['Login', 'Register']
+
 const route = useRoute()
 const authStore = useAuthStore()
-
-const AUTH_ROUTES = ['Login', 'Register']
-const ADMIN_PREFIX = '/admin'
 const showHeader = computed(() => {
   const name = route.name as string
-  if (AUTH_ROUTES.includes(name)) return false
-  if (route.path.startsWith(ADMIN_PREFIX)) return false
-  return true
+  return !AUTH_ROUTES.includes(name)
 })
 
 const pendingFailures = ref<any[]>([])
-const isAdminRoute = computed(() => route.path.startsWith(ADMIN_PREFIX))
+const isAdminRoute = computed(() => route.path.startsWith('/admin'))
 
 let unsubFailure: (() => void) | null = null
 let unsubWorkerCrash: (() => void) | null = null

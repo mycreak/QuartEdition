@@ -7,11 +7,12 @@ routes/user/movie_routes.py
     GET /user/movies                        电影列表（分页+搜索+类型过滤，按评分降序）
     GET /user/movies/<id>                   电影详情
     GET /user/movies/<movie_id>/comment-wordcloud  短评词云
+    GET /user/recommend                        电影推荐（基于用户标签画像）
 """
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from quart import Blueprint, request, jsonify
 from quart_schema import tag
@@ -30,15 +31,28 @@ async def list_movies():
     keyword = request.args.get("keyword", "").strip()
     type_num = request.args.get("type_num", type=int)
     interval_ids = request.args.get("interval_ids", "")
+    region = request.args.get("region", "").strip()
+    year = request.args.get("year", type=int)
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 20, type=int)
 
     from quart import current_app
+    region_id = None
+    if region:
+        # 根据地区名称查询对应的region_id
+        region_row = await current_app.services.movie_service.db.find_one("regions", {"name": region})
+        if not region_row:
+            # 地区不存在，直接返回空结果
+            return jsonify({"items": [], "total": 0, "page": page, "page_size": page_size})
+        region_id = region_row["id"]
+
     result = await current_app.services.movie_service.batch_list_movies(
         keyword=keyword,
         type_num=type_num,
         published=1,
         interval_ids=interval_ids,
+        region_id=region_id,
+        release_year=year,
         page=page,
         page_size=page_size,
     )
@@ -151,7 +165,7 @@ async def get_comment_wordcloud(movie_id: int):
     data = {
         "words": words,
         "total_words": len(words),
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S+08:00"),
     }
     try:
         await redis_set(cache_key, json.dumps(data, ensure_ascii=False))
@@ -159,3 +173,23 @@ async def get_comment_wordcloud(movie_id: int):
         logger.warning("Redis 写入词云缓存失败 movie_id=%s: %s", movie_id, e)
 
     return jsonify({"success": True, "data": data})
+
+
+# ═══════════════════════════════════════════════════════════
+# 推荐
+# ═══════════════════════════════════════════════════════════
+
+@movie_bp.route("/recommend", methods=["GET"])
+@require_login
+@tag(["推荐"])
+async def recommend():
+    from quart import g
+    from services.recommend_service import get_recommend_service
+
+    top_n = request.args.get("top_n", 10, type=int)
+    top_n = max(1, min(top_n, 50))
+
+    user_id = g.user_id
+    svc = get_recommend_service()
+    items = await svc.recommend(user_id, top_n=top_n)
+    return jsonify({"items": items, "total": len(items)})

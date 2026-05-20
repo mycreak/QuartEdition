@@ -6,8 +6,10 @@ routes/admin/user_routes.py
 端点：
     GET  /admin/users                       — 用户列表
     POST /admin/users                       — 创建用户
-    PATCH /admin/users/<id>                — 更新用户（is_active / display_name）
+    PATCH /admin/users/<id>                 — 更新用户（is_active / display_name）
     POST /admin/users/<id>/permissions      — 分配权限（空数组=清空）
+    DELETE /admin/users/<id>/permissions/<code> — 撤销单条权限
+    GET  /admin/users/<id>/profile          — 用户画像（标签按维度分组）
 """
 
 import logging
@@ -178,3 +180,52 @@ async def update_user(user_id: int):
         return jsonify(user.model_dump())
     except ServiceError as e:
         return _as_error(e)
+
+
+@user_bp.route("/users/<int:user_id>/profile", methods=["GET"])
+@require_permission("user:manage")
+@tag(["用户管理"])
+async def get_user_profile(user_id: int):
+    """
+    查询用户画像 — 用户基本信息 + 全维度标签列表。
+
+    输入: user_id
+    输出: { user: {id, username, display_name}, tags: [{dimension, label, score}, ...] }
+    副作用: 2 次查询（users + user_tag_score 按 score DESC）
+    """
+    from services.auth_service import _get_auth_service
+
+    svc = _get_auth_service()
+    try:
+        user = await svc.get_user(user_id)
+    except ServiceError:
+        return jsonify({"error": f"用户 #{user_id} 不存在", "code": "NOT_FOUND"}), 404
+
+    # 查 user_tag_score 聚合表（按 score 降序）
+    raw = svc.db.raw_mysql()
+    rows = await raw.execute_query(
+        """SELECT dimension, label, score, last_action, updated_at
+           FROM user_tag_score
+           WHERE user_id = %s
+           ORDER BY score DESC""",
+        (user_id,),
+    )
+
+    tags = [
+        {
+            "dimension": r["dimension"],
+            "label": r["label"],
+            "score": float(r["score"]),
+            "last_action": r.get("last_action"),
+        }
+        for r in rows
+    ]
+
+    total_score = sum(t["score"] for t in tags)
+
+    return jsonify({
+        "user": user.model_dump(),
+        "tags": tags,
+        "total_score": round(total_score, 2),
+        "tag_count": len(tags),
+    })

@@ -43,6 +43,7 @@ async def init_mysql():
             connect_timeout=get_mysql_config().connect_timeout,
             autocommit=True,
             cursorclass=DictCursor,
+            init_command="SET time_zone='+08:00'",
         )
         # 测试连接
         async with _mysql_pool.acquire() as conn:

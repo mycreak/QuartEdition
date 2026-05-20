@@ -532,7 +532,7 @@ class Monitor:
                 try:
                     tdata = json.loads(event.task)
                     task_type = tdata.get("type", "")
-                    label = tdata.get("label", "") or tdata.get("title", "") or tdata.get("douban_id", "")
+                    label = tdata.get("label", "") or tdata.get("movie_title", "") or tdata.get("title", "") or tdata.get("douban_id", "")
                 except (json.JSONDecodeError, TypeError):
                     pass
                 await self.ws_manager.push(admin_id, {
@@ -646,7 +646,7 @@ class Monitor:
 
         safe_keys = {
             "queue_size", "queue_maxsize", "queue_saturation",
-            "worker_idle", "worker_busy",
+            "worker_idle", "worker_busy", "worker_cooldown", "worker_cooldown_info",
             "worker_alive", "worker_dead", "worker_stuck", "worker_crashed_total",
             "events_success_total", "events_failure_total", "events_cancelled_total",
             "events_storage_failures",

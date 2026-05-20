@@ -224,11 +224,16 @@ class BrowserFetcher:
 
         if identity is not None:
             if not hasattr(identity, "cookie_id"):
-                logger.error(
-                    f"fetch_page 收到非法的 identity 对象: "
+                import traceback
+                logger.warning(
+                    f"fetch_page 收到非法的 identity 对象（已降级为游客）: "
                     f"type={type(identity).__name__} "
                     f"module={getattr(identity, '__name__', 'N/A')} "
-                    f"dir={[a for a in dir(identity) if not a.startswith('_')][:10]}"
+                    f"url={url}"
+                )
+                logger.warning(
+                    f"fetch_page 非法 identity 调用栈:\n"
+                    + "".join(traceback.format_stack()[-8:-1])
                 )
                 identity = None
             else:

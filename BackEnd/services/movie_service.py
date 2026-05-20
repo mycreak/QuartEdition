@@ -1096,7 +1096,17 @@ class MovieService:
                 "movie_count": interval_map.get(iid, 0),
             })
 
+        # 查询所有地区列表（去重，按名称排序）
+        region_rows = await self.db.execute_raw("""
+            SELECT DISTINCT r.name 
+            FROM regions r 
+            JOIN movie_regions mr ON r.id = mr.region_id
+            ORDER BY r.name
+        """)
+        regions = [r["name"] for r in region_rows]
+
         return {
             "types": type_rows,
             "intervals": intervals,
+            "regions": regions,
         }

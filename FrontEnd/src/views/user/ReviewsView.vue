@@ -78,7 +78,7 @@ import { ChatLineRound, StarFilled } from '@element-plus/icons-vue'
 const reviews = ref<(Review & { expanded?: boolean })[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(15)
 const loading = ref(false)
 const error = ref('')
 
