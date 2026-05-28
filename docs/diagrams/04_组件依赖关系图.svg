@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 650" font-family="'Microsoft YaHei','SimHei',sans-serif">
+  <defs>
+    <filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.10"/></filter>
+    <marker id="arrowSolid" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#555"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#2980b9"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#27ae60"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#e74c3c"/>
+    </marker>
+  </defs>
+
+  <rect width="1050" height="650" fill="#f8f9fc" rx="8"/>
+  <text x="525" y="32" text-anchor="middle" font-size="18" font-weight="bold" fill="#2c3e50">系统组件依赖关系图</text>
+
+  <!-- ====== 图例 ====== -->
+  <rect x="30" y="44" width="990" height="32" rx="5" fill="#f0f4f8"/>
+  <rect x="46" y="52" width="16" height="16" rx="3" fill="#667eea"/>
+  <text x="68" y="64" font-size="10" fill="#555">路由</text>
+  <rect x="120" y="52" width="16" height="16" rx="3" fill="#27ae60"/>
+  <text x="142" y="64" font-size="10" fill="#555">Service</text>
+  <rect x="200" y="52" width="16" height="16" rx="3" fill="#1abc9c"/>
+  <text x="222" y="64" font-size="10" fill="#555">数据层</text>
+  <rect x="270" y="52" width="16" height="16" rx="3" fill="#e74c3c"/>
+  <text x="292" y="64" font-size="10" fill="#555">后台</text>
+  <rect x="340" y="52" width="16" height="16" rx="3" fill="#f39c12"/>
+  <text x="362" y="64" font-size="10" fill="#555">爬虫</text>
+  <rect x="410" y="52" width="16" height="16" rx="3" fill="#8e44ad"/>
+  <text x="432" y="64" font-size="10" fill="#555">工具</text>
+  <line x1="500" y1="60" x2="550" y2="60" stroke="#2980b9" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="558" y="64" font-size="10" fill="#555">HTTP调用</text>
+  <line x1="630" y1="54" x2="680" y2="54" stroke="#e74c3c" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="688" y="58" font-size="10" fill="#555">异步事件</text>
+  <line x1="760" y1="66" x2="810" y2="66" stroke="#aaa" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <text x="818" y="70" font-size="10" fill="#555">WebSocket</text>
+
+  <!-- ====== 表现层 ====== -->
+  <!-- public -->
+  <rect x="40" y="92" width="140" height="48" rx="8" fill="#667eea" opacity="0.85" filter="url(#shadow)"/>
+  <text x="110" y="113" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">auth_routes</text>
+  <text x="110" y="130" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">登录 · 注册 · /me</text>
+
+  <!-- user routes -->
+  <rect x="210" y="92" width="160" height="48" rx="8" fill="#667eea" opacity="0.85" filter="url(#shadow)"/>
+  <text x="290" y="113" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">user_routes (7)</text>
+  <text x="290" y="130" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">电影 · 评论 · 词云 · 片单 · 标记</text>
+
+  <!-- admin routes -->
+  <rect x="400" y="92" width="170" height="48" rx="8" fill="#667eea" opacity="0.85" filter="url(#shadow)"/>
+  <text x="485" y="113" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">admin_routes (13)</text>
+  <text x="485" y="130" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">任务 · 电影 · 评论 · 监控</text>
+
+  <!-- WebSocket -->
+  <rect x="600" y="92" width="140" height="48" rx="8" fill="#667eea" opacity="0.85" filter="url(#shadow)"/>
+  <text x="670" y="113" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">websocket</text>
+  <text x="670" y="130" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">JWT 鉴权 · 实时推送</text>
+
+  <!-- 路由 → Service -->
+  <line x1="110" y1="140" x2="110" y2="200" stroke="#2980b9" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <line x1="290" y1="140" x2="290" y2="200" stroke="#2980b9" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <line x1="485" y1="140" x2="485" y2="200" stroke="#2980b9" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <!-- 路由 → 中间件 -->
+  <line x1="110" y1="92" x2="52" y2="180" stroke="#8e44ad" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="485" y1="92" x2="790" y2="180" stroke="#8e44ad" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- ====== 中间件工具箱 ====== -->
+  <rect x="800" y="140" width="210" height="82" rx="8" fill="#f4ecf7" stroke="#8e44ad" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="905" y="160" text-anchor="middle" font-size="12" font-weight="bold" fill="#7d3c98">utils/ 中间件</text>
+  <text x="905" y="177" text-anchor="middle" font-size="9" fill="#555">JWT 鉴权 · 权限拦截</text>
+  <text x="905" y="192" text-anchor="middle" font-size="9" fill="#555">滑动窗口限流 · 统一异常</text>
+  <text x="905" y="207" text-anchor="middle" font-size="9" fill="#555">Snowflake ID · TOS · AI Client</text>
+
+  <!-- ====== Service 层 ====== -->
+  <rect x="40" y="204" width="160" height="48" rx="8" fill="#27ae60" opacity="0.82" filter="url(#shadow)"/>
+  <text x="120" y="225" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">AuthService</text>
+  <text x="120" y="242" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">认证 · JWT · bcrypt</text>
+
+  <rect x="220" y="204" width="160" height="48" rx="8" fill="#27ae60" opacity="0.82" filter="url(#shadow)"/>
+  <text x="300" y="225" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">MovieService</text>
+  <text x="300" y="242" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">电影CRUD · 评分 · 人员</text>
+
+  <rect x="400" y="204" width="160" height="48" rx="8" fill="#27ae60" opacity="0.82" filter="url(#shadow)"/>
+  <text x="480" y="225" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">ReviewService</text>
+  <text x="480" y="242" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">评论 · 词云数据 · 上下架</text>
+
+  <rect x="580" y="204" width="170" height="48" rx="8" fill="#27ae60" opacity="0.82" filter="url(#shadow)"/>
+  <text x="665" y="225" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff">Task Services</text>
+  <text x="665" y="242" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">TaskHistory · TaskFailure</text>
+
+  <rect x="770" y="204" width="240" height="48" rx="8" fill="#27ae60" opacity="0.82" filter="url(#shadow)"/>
+  <text x="890" y="222" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">推荐 &amp; 行为</text>
+  <text x="890" y="240" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">Playlist · UserAction · Recommend · StyleTag · MovieContext</text>
+
+  <!-- Service → DB -->
+  <line x1="120" y1="252" x2="400" y2="320" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+  <line x1="300" y1="252" x2="400" y2="320" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+  <line x1="480" y1="252" x2="450" y2="320" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+  <line x1="665" y1="252" x2="600" y2="320" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+  <line x1="890" y1="252" x2="800" y2="320" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+
+  <!-- ====== 数据访问层 ====== -->
+  <rect x="250" y="280" width="550" height="52" rx="10" fill="#1abc9c" opacity="0.88" filter="url(#shadow)"/>
+  <text x="525" y="300" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">DatabaseLayerV2 — 统一数据访问中间层</text>
+  <text x="525" y="318" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">ContextVar 隔离 · 手动事务 · 三 DB 透明切换 · 参数化防注入</text>
+
+  <!-- DB → 三库 -->
+  <line x1="350" y1="332" x2="220" y2="392" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <line x1="525" y1="332" x2="525" y2="392" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <line x1="720" y1="332" x2="830" y2="392" stroke="#1abc9c" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+  <rect x="100" y="362" width="240" height="44" rx="8" fill="rgba(26,188,156,0.15)" stroke="#1abc9c" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="220" y="382" text-anchor="middle" font-size="12" font-weight="bold" fill="#0e6655">MySQL (aiomysql)</text>
+  <text x="220" y="398" text-anchor="middle" font-size="9" fill="#555">21 张表 · 结构化数据</text>
+
+  <rect x="400" y="362" width="250" height="44" rx="8" fill="rgba(26,188,156,0.15)" stroke="#1abc9c" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="525" y="382" text-anchor="middle" font-size="12" font-weight="bold" fill="#0e6655">MongoDB (motor)</text>
+  <text x="525" y="398" text-anchor="middle" font-size="9" fill="#555">2 集合 · 评论数据</text>
+
+  <rect x="720" y="362" width="220" height="44" rx="8" fill="rgba(26,188,156,0.15)" stroke="#1abc9c" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="830" y="382" text-anchor="middle" font-size="12" font-weight="bold" fill="#0e6655">Redis</text>
+  <text x="830" y="398" text-anchor="middle" font-size="9" fill="#555">延迟队列 · 限流 · 缓存</text>
+
+  <!-- ====== 后台调度层 ====== -->
+  <rect x="250" y="418" width="190" height="52" rx="8" fill="#e74c3c" opacity="0.82" filter="url(#shadow)"/>
+  <text x="345" y="440" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">Puller (×1)</text>
+  <text x="345" y="458" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">Redis ZSET → Queue</text>
+
+  <rect x="465" y="418" width="190" height="52" rx="8" fill="#e74c3c" opacity="0.82" filter="url(#shadow)"/>
+  <text x="560" y="440" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">BrowserPool</text>
+  <text x="560" y="458" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">5 Worker 协程 + 冷却</text>
+
+  <rect x="680" y="418" width="170" height="52" rx="8" fill="#e74c3c" opacity="0.82" filter="url(#shadow)"/>
+  <text x="765" y="440" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">Monitor (×1)</text>
+  <text x="765" y="458" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">巡检 · 归档 · 推送</text>
+
+  <!-- 调度层连接 -->
+  <line x1="460" y1="444" x2="525" y2="396" stroke="#e74c3c" stroke-width="1.2"/>
+  <line x1="560" y1="444" x2="525" y2="396" stroke="#e74c3c" stroke-width="1.2" marker-end="url(#arrowRed)"/>
+
+  <!-- Puller ← Redis -->
+  <line x1="220" y1="384" x2="345" y2="418" stroke="#e74c3c" stroke-width="1.2" stroke-dasharray="5,3"/>
+
+  <!-- Monitor → MySQL -->
+  <line x1="700" y1="418" x2="240" y2="396" stroke="#e74c3c" stroke-width="1.2" stroke-dasharray="5,3"/>
+
+  <!-- Worker 调用 Crawler -->
+  <line x1="560" y1="470" x2="560" y2="514" stroke="#2980b9" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <!-- ====== 爬虫引擎 ====== -->
+  <rect x="300" y="520" width="520" height="52" rx="10" fill="#f39c12" opacity="0.88" filter="url(#shadow)"/>
+  <text x="560" y="542" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">CrawlerEngine — 爬虫垂直引擎</text>
+  <text x="560" y="560" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.85)">Fetcher (双引擎) → Parser (纯函数) → Storage (多表)   |   ProxyPool · CookieManager · 8种任务</text>
+
+  <!-- Crawler → DB -->
+  <line x1="380" y1="520" x2="220" y2="406" stroke="#1abc9c" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="600" y1="520" x2="525" y2="406" stroke="#1abc9c" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- ====== 配置层 ====== -->
+  <rect x="30" y="136" width="16" height="90" rx="3" fill="#6c7a89" opacity="0.5"/>
+  <text x="22" y="186" text-anchor="middle" font-size="8" fill="#aaa" writing-mode="tb">config/</text>
+
+  <!-- 左侧配置标注 -->
+  <text x="975" y="145" font-size="8" fill="#aaa" text-anchor="end">所有层</text>
+  <text x="975" y="158" font-size="8" fill="#aaa" text-anchor="end">均读取</text>
+  <text x="975" y="171" font-size="8" fill="#aaa" text-anchor="end">配置层</text>
+
+  <!-- 底部说明 -->
+  <rect x="30" y="590" width="990" height="48" rx="6" fill="#fef9e7" stroke="#f39c12" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="525" y="612" text-anchor="middle" font-size="11" font-weight="bold" fill="#7d6608">架构约束</text>
+  <text x="525" y="630" text-anchor="middle" font-size="10" fill="#555">① 依赖方向严格自顶向下（路由→Service→DB）· ② 唯一横切调用：Monitor → WebSocket 推送（单向、松散耦合）· ③ 所有组件通过接口约定（Pydantic合同）而非具体实现耦合</text>
+</svg>

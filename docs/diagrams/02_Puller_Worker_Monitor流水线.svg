@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 560" font-family="'Microsoft YaHei','SimHei',sans-serif">
+  <defs>
+    <filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/></filter>
+    <marker id="arrowRight" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#555"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#e74c3c"/>
+    </marker>
+  </defs>
+
+  <rect width="1050" height="560" fill="#fafbfc" rx="8"/>
+  <text x="525" y="34" text-anchor="middle" font-size="18" font-weight="bold" fill="#2c3e50">Puller → Worker → Monitor 异步流水线架构</text>
+
+  <!-- ====== 第一阶段：任务提交 ====== -->
+  <rect x="30" y="56" width="150" height="48" rx="6" fill="#e8f4fd" stroke="#3498db" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="105" y="76" text-anchor="middle" font-size="12" font-weight="bold" fill="#2980b9">管理员/API</text>
+  <text x="105" y="93" text-anchor="middle" font-size="10" fill="#7f8c8d">提交爬虫任务</text>
+
+  <line x1="180" y1="80" x2="240" y2="80" stroke="#555" stroke-width="1.8" marker-end="url(#arrowRight)"/>
+
+  <!-- ====== Redis ZSET ====== -->
+  <rect x="245" y="52" width="170" height="56" rx="8" fill="#fff3e0" stroke="#e67e22" stroke-width="2" filter="url(#shadow)"/>
+  <text x="330" y="73" text-anchor="middle" font-size="12" font-weight="bold" fill="#d35400">Redis ZSET</text>
+  <text x="330" y="92" text-anchor="middle" font-size="10" fill="#7f8c8d">crawler:delay_queue</text>
+  <text x="330" y="105" text-anchor="middle" font-size="9" fill="#aaa">score=执行时间戳</text>
+
+  <line x1="415" y1="80" x2="475" y2="80" stroke="#555" stroke-width="1.8" marker-end="url(#arrowRight)"/>
+
+  <!-- ====== Puller ====== -->
+  <rect x="480" y="50" width="180" height="100" rx="10" fill="#fdecea" stroke="#e74c3c" stroke-width="2" filter="url(#shadow)"/>
+  <text x="570" y="73" text-anchor="middle" font-size="14" font-weight="bold" fill="#c0392b">Puller (×1)</text>
+  <text x="570" y="92" text-anchor="middle" font-size="10" fill="#555">单协程 · 周期拉取</text>
+  <line x1="498" y1="100" x2="642" y2="100" stroke="#ddd" stroke-width="0.5"/>
+  <text x="570" y="115" text-anchor="middle" font-size="9" fill="#888">ZRANGEBYSCORE + ZREM</text>
+  <text x="570" y="130" text-anchor="middle" font-size="9" fill="#888">Lua 原子弹出 · 批次=10</text>
+  <text x="570" y="144" text-anchor="middle" font-size="9" fill="#888">背压: ≥80%停 ≤60%启</text>
+
+  <line x1="660" y1="100" x2="720" y2="100" stroke="#555" stroke-width="1.8" marker-end="url(#arrowRight)"/>
+  <text x="690" y="92" text-anchor="middle" font-size="9" fill="#888">asyncio.Queue</text>
+  <text x="690" y="115" text-anchor="middle" font-size="9" fill="#aaa">maxsize=45</text>
+
+  <!-- ====== BrowserPool ====== -->
+  <rect x="725" y="42" width="220" height="116" rx="10" fill="#eafaf1" stroke="#27ae60" stroke-width="2" filter="url(#shadow)"/>
+  <text x="835" y="65" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e8449">BrowserPool</text>
+  <text x="835" y="83" text-anchor="middle" font-size="10" fill="#555">固定 5 Worker 协程</text>
+  <line x1="743" y1="92" x2="927" y2="92" stroke="#ddd" stroke-width="0.5"/>
+
+  <rect x="740" y="98" width="45" height="22" rx="3" fill="#d5f5e3"/>
+  <text x="762" y="113" text-anchor="middle" font-size="10" fill="#27ae60">W-0</text>
+
+  <rect x="790" y="98" width="45" height="22" rx="3" fill="#d5f5e3"/>
+  <text x="812" y="113" text-anchor="middle" font-size="10" fill="#27ae60">W-1</text>
+
+  <rect x="840" y="98" width="45" height="22" rx="3" fill="#d5f5e3"/>
+  <text x="862" y="113" text-anchor="middle" font-size="10" fill="#27ae60">W-2</text>
+
+  <rect x="890" y="98" width="45" height="22" rx="3" fill="#d5f5e3"/>
+  <text x="912" y="113" text-anchor="middle" font-size="10" fill="#27ae60">W-3</text>
+
+  <text x="833" y="145" text-anchor="middle" font-size="9" fill="#888">每任务后冷却 150~180s (错峰)</text>
+
+  <line x1="835" y1="158" x2="835" y2="188" stroke="#e74c3c" stroke-width="1.5" marker-end="url(#arrowRed)"/>
+
+  <!-- ====== CrawlerEngine ====== -->
+  <rect x="740" y="192" width="200" height="44" rx="8" fill="#fef9e7" stroke="#f39c12" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="840" y="212" text-anchor="middle" font-size="12" font-weight="bold" fill="#d68910">CrawlerEngine</text>
+  <text x="840" y="228" text-anchor="middle" font-size="9" fill="#888">fetch → parse → store</text>
+
+  <!-- 虚线到 event_queue -->
+  <line x1="940" y1="158" x2="990" y2="280" stroke="#e74c3c" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrowRed)"/>
+
+  <!-- ====== event_queue ====== -->
+  <rect x="960" y="286" width="78" height="36" rx="6" fill="#f4ecf7" stroke="#8e44ad" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="999" y="302" text-anchor="middle" font-size="9" fill="#8e44ad">Worker</text>
+  <text x="999" y="314" text-anchor="middle" font-size="9" fill="#8e44ad">Event Queue</text>
+
+  <line x1="999" y1="322" x2="999" y2="358" stroke="#8e44ad" stroke-width="1.5" marker-end="url(#arrowRed)"/>
+
+  <!-- ====== Monitor ====== -->
+  <rect x="870" y="362" width="170" height="96" rx="10" fill="#ebf5fb" stroke="#2980b9" stroke-width="2" filter="url(#shadow)"/>
+  <text x="955" y="386" text-anchor="middle" font-size="14" font-weight="bold" fill="#2471a3">Monitor (×1)</text>
+  <text x="955" y="404" text-anchor="middle" font-size="10" fill="#555">单协程 · 周期巡检</text>
+  <text x="955" y="418" text-anchor="middle" font-size="9" fill="#888">interval = 30s</text>
+  <text x="955" y="432" text-anchor="middle" font-size="9" fill="#888">消费事件 · 写入归档</text>
+  <text x="955" y="446" text-anchor="middle" font-size="9" fill="#888">WS 实时推送 · 死 Worker 自愈</text>
+
+  <!-- Monitor → MySQL -->
+  <line x1="870" y1="420" x2="780" y2="460" stroke="#27ae60" stroke-width="1.5"/>
+  <rect x="700" y="446" width="120" height="32" rx="5" fill="#d5f5e3" stroke="#27ae60" stroke-width="1"/>
+  <text x="760" y="460" text-anchor="middle" font-size="9" fill="#1e8449">MySQL 归档</text>
+  <text x="760" y="472" text-anchor="middle" font-size="8" fill="#888">task_history / failures</text>
+
+  <!-- Monitor → WS -->
+  <line x1="1040" y1="410" x2="1075" y2="340" stroke="#8e44ad" stroke-width="1.5"/>
+  <rect x="1040" y="320" width="80" height="26" rx="4" fill="#f4ecf7" stroke="#8e44ad" stroke-width="1"/>
+  <text x="1080" y="337" text-anchor="middle" font-size="8" fill="#8e44ad">WS 推送</text>
+
+  <!-- ====== 底部图例 ====== -->
+  <line x1="30" y1="502" x2="1020" y2="502" stroke="#eee" stroke-width="1"/>
+
+  <text x="50" y="524" font-size="11" font-weight="bold" fill="#555">关键设计要点：</text>
+
+  <rect x="50" y="530" width="220" height="22" rx="3" fill="#fff3e0"/>
+  <text x="160" y="545" text-anchor="middle" font-size="9" fill="#d35400">① Redis ZSET 延迟调度 (score=执行时间)</text>
+
+  <rect x="280" y="530" width="230" height="22" rx="3" fill="#fdecea"/>
+  <text x="395" y="545" text-anchor="middle" font-size="9" fill="#c0392b">② Puller 背压: 双阈值回滞 ≥80%/≤60%</text>
+
+  <rect x="520" y="530" width="240" height="22" rx="3" fill="#eafaf1"/>
+  <text x="640" y="545" text-anchor="middle" font-size="9" fill="#27ae60">③ Worker 冷却: random(150, 180)s 错峰</text>
+
+  <rect x="770" y="530" width="240" height="22" rx="3" fill="#ebf5fb"/>
+  <text x="890" y="545" text-anchor="middle" font-size="9" fill="#2980b9">④ Monitor 自愈: 死 Worker 自动重启</text>
+</svg>

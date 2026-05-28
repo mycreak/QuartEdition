@@ -247,10 +247,10 @@ async def test_proxy():
 
     start = _time.time()
 
-    # 优先用真实浏览器验证（与爬虫实际行为一致），不可用时回退 aiohttp
+    from quart import current_app
+    browser = current_app.browser
+
     try:
-        from quart import current_app
-        browser = current_app.browser
         ok, message = await pool.verify_proxy_browser(
             host, port,
             browser=browser,
@@ -259,9 +259,8 @@ async def test_proxy():
             password=password,
             timeout=15,
         )
-    except Exception:
-        ok = await pool.verify_proxy(host, port, timeout=8.0, username=username, password=password)
-        message = "连接成功" if ok else "连接超时或代理不可用"
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
 
     latency = int((_time.time() - start) * 1000)
 
@@ -300,10 +299,12 @@ async def proxy_options():
 @require_permission("infra:proxy:manage")
 @tag(["基础设施"])
 async def health_check():
-    """手动触发全量代理验证。"""
+    """手动触发全量代理验证（Playwright 真浏览器，非 aiohttp 直连）。"""
     try:
         pool = get_proxy_pool()
-        result = await pool.health_check(concurrency=10)
+        from quart import current_app
+        browser = current_app.browser
+        result = await pool.health_check(browser=browser, concurrency=2)
         return jsonify(result)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
@@ -434,7 +435,7 @@ async def update_cookie(account_id: str):
     except Exception:
         return jsonify({"error": "请求格式错误"}), 400
 
-    updatable = ["label", "remark", "platform", "enabled", "allowed_regions"]
+    updatable = ["label", "remark", "platform", "enabled", "allowed_regions", "bound_admin_ids"]
     kwargs = {k: body[k] for k in updatable if k in body}
 
     if not kwargs:
@@ -470,25 +471,46 @@ async def delete_cookie(account_id: str):
 @tag(["基础设施"])
 async def test_cookie():
     """
-    测试 Cookie 有效性。
+    测试 Cookie 有效性（Playwright 真浏览器 + 代理 + IP 后验）。
 
-    请求体：{ "id": "main" }
+    请求体：
+        { "id": "main" }                             仅 Cookie（自动选可用代理）
+        { "id": "main", "proxy_host": "1.2.3.4", "proxy_port": 8080 }  指定代理
+        { "id": "main", "proxy_host": "1.2.3.4", "proxy_port": 8080, "proxy_username": "u", "proxy_password": "p" }
 
     响应：
-        { "success": true,  "message": "Cookie 有效，账号正常" }
-        { "success": false, "message": "Cookie 已过期，被重定向到登录页" }
+        { "success": true,  "verdict": "ok",                 "message": "Cookie 有效" }
+        { "success": false, "verdict": "cookie_expired",     "message": "Cookie 已过期" }
+        { "success": false, "verdict": "ip_blocked",         "message": "IP 不可用" }
+        { "success": false, "verdict": "ip_pass_cookie_unknown", "message": "IP 正常但 Cookie 不确定" }
+
+    IP 后验：当代理疑似不可用时自动转入代理验证，失败时同步更新代理状态机。
     """
     try:
         body = await request.get_json()
         account_id = (body.get("id") or "").strip()
         if not account_id:
             return jsonify({"error": "id 不能为空"}), 400
+
+        proxy_host = (body.get("proxy_host") or "").strip()
+        proxy_port = body.get("proxy_port", 0) or 0
+        proxy_username = (body.get("proxy_username") or "").strip()
+        proxy_password = (body.get("proxy_password") or "").strip()
     except Exception:
         return jsonify({"error": "请求格式错误"}), 400
 
     try:
+        from quart import current_app
+        browser = current_app.browser
         mgr = _get_cookie_manager()
-        result = await mgr.verify_account(account_id)
+        result = await mgr.verify_account_v2(
+            account_id,
+            browser=browser,
+            proxy_host=proxy_host,
+            proxy_port=proxy_port,
+            proxy_username=proxy_username,
+            proxy_password=proxy_password,
+        )
         return jsonify(result)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503

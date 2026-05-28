@@ -76,3 +76,26 @@ class UserLogin(BaseModel):
     """登录入参。"""
     username: str = Field(min_length=1, description="用户名")
     password: str = Field(min_length=1, description="明文密码")
+
+
+class PasswordChange(BaseModel):
+    """
+    修改密码入参。
+
+    校验：
+        old_password: 不为空
+        new_password: 6-128 位，必须包含大写字母、小写字母、数字
+    """
+    old_password: str = Field(min_length=1, description="原密码")
+    new_password: str = Field(min_length=6, max_length=128, description="新密码")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not PASSWORD_PATTERN_UPPER.search(v):
+            raise ValueError("密码必须包含至少一个大写字母")
+        if not PASSWORD_PATTERN_LOWER.search(v):
+            raise ValueError("密码必须包含至少一个小写字母")
+        if not PASSWORD_PATTERN_DIGIT.search(v):
+            raise ValueError("密码必须包含至少一个数字")
+        return v

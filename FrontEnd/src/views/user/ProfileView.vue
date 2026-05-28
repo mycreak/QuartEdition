@@ -32,6 +32,7 @@
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSubmit" :loading="loading">保存修改</el-button>
+          <el-button @click="openPasswordDialog">修改密码</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -55,7 +56,7 @@
             class="movie-card-wrapper"
           >
             <router-link
-              :to="`/movies/${item.movie_id}`"
+              :to="`/movies/${item.movie_id}?from=profile`"
               class="movie-card-link"
             >
               <div v-if="item.poster_url" class="movie-card-poster">
@@ -93,16 +94,48 @@
       <!-- 评论列表 -->
       <div v-else v-loading="commentLoading" class="movie-list">
         <template v-if="commentItems.length">
-          <div v-for="item in commentItems" :key="item.movie_id" class="comment-item">
-            <router-link :to="`/movies/${item.movie_id}`" class="comment-item-title">
-              {{ item.title || `电影 #${item.movie_id}` }}
+          <div v-for="item in commentItems" :key="item.movie_id" class="movie-card-wrapper">
+            <router-link
+              :to="`/movies/${item.movie_id}?from=profile`"
+              class="movie-card-link"
+            >
+              <div v-if="item.poster_url" class="movie-card-poster">
+                <img :src="item.poster_url" :alt="item.title" referrerpolicy="no-referrer" />
+              </div>
+              <div v-else class="movie-card-placeholder">
+                <el-icon :size="24"><VideoCamera /></el-icon>
+              </div>
+              <div class="movie-card-info">
+                <div class="title">{{ item.title || `电影 #${item.movie_id}` }}</div>
+                <div class="meta" v-if="item.release_year">{{ item.release_year }}</div>
+              </div>
+              <div class="movie-card-rating" v-if="item.rating">
+                <el-icon :size="14"><StarFilled /></el-icon>
+                {{ item.rating }}
+              </div>
             </router-link>
-            <div class="comment-item-text">{{ item.text }}</div>
-            <div class="comment-item-meta">
-              <span v-if="item.rating">
-                <el-icon :size="12"><StarFilled /></el-icon> {{ item.rating }}
-              </span>
-              <span v-if="item.date">{{ item.date }}</span>
+            <!-- 评论展示区域 -->
+            <div class="movie-card-summary">
+              <div class="summary-header">
+                <div class="summary-header-left">
+                  <el-icon :size="16"><Document /></el-icon>
+                  <span>我的评论</span>
+                </div>
+                <el-button
+                  type="danger"
+                  link
+                  size="small"
+                  :icon="Delete"
+                  :loading="deletingMovieId === item.movie_id"
+                  @click="handleDeleteComment(item.movie_id)"
+                >
+                  删除
+                </el-button>
+              </div>
+              <p class="summary-text">{{ item.text }}</p>
+              <div v-if="item.date" class="comment-item-meta">
+                <span>{{ item.date }}</span>
+              </div>
             </div>
           </div>
         </template>
@@ -118,7 +151,39 @@
         :page-size="moviePageSize"
         @change="fetchMyMovies"
       />
+      <Pagination
+        v-if="activeTab === 'comments' && commentTotal > commentPageSize"
+        :current="commentPage"
+        :total="commentTotal"
+        :page-size="commentPageSize"
+        @change="fetchMyComments"
+      />
     </el-card>
+
+    <!-- ── 修改密码弹窗 ── -->
+    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="440px" :close-on-click-modal="false">
+      <el-form
+        ref="passwordFormRef"
+        :model="passwordForm"
+        :rules="passwordRules"
+        label-width="80px"
+        :disabled="passwordLoading"
+      >
+        <el-form-item label="原密码" prop="old_password">
+          <el-input v-model="passwordForm.old_password" type="password" placeholder="请输入原密码" show-password />
+        </el-form-item>
+        <el-form-item label="新密码" prop="new_password">
+          <el-input v-model="passwordForm.new_password" type="password" placeholder="至少6位，含大/小写字母和数字" show-password />
+        </el-form-item>
+        <el-form-item label="确认密码" prop="confirm_password">
+          <el-input v-model="passwordForm.confirm_password" type="password" placeholder="请再次输入新密码" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleChangePassword" :loading="passwordLoading">确认修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,12 +191,12 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { updateProfile } from '@/api/profile'
+import { updateProfile, changePassword } from '@/api/profile'
 import { userActionApi } from '@/api/user'
 import { getPermissionShortName } from '@/utils/permission'
-import { HomeFilled, StarFilled, VideoCamera, Document } from '@element-plus/icons-vue'
+import { HomeFilled, StarFilled, VideoCamera, Document, Delete } from '@element-plus/icons-vue'
 import AvatarUpload from '@/components/common/AvatarUpload.vue'
 import Pagination from '@/components/common/Pagination.vue'
 
@@ -167,8 +232,10 @@ interface MovieItem {
 interface CommentItem {
   movie_id: number
   title?: string
-  text: string
+  poster_url?: string
+  release_year?: number
   rating?: number
+  text: string
   date?: string
 }
 
@@ -177,10 +244,14 @@ const movieItems = ref<MovieItem[]>([])
 const movieLoading = ref(false)
 const moviePage = ref(1)
 const movieTotal = ref(0)
-const moviePageSize = ref(15)
+const moviePageSize = ref(5)
 
 const commentItems = ref<CommentItem[]>([])
 const commentLoading = ref(false)
+const commentPage = ref(1)
+const commentTotal = ref(0)
+const commentPageSize = ref(10)
+const deletingMovieId = ref<number | null>(null)
 
 const tabEmptyText = computed(() => {
   const map: Record<string, string> = {
@@ -243,15 +314,42 @@ async function fetchMyMovies(page = 1): Promise<void> {
   }
 }
 
-async function fetchMyComments(): Promise<void> {
+async function fetchMyComments(page = 1): Promise<void> {
   commentLoading.value = true
+  commentPage.value = page
   try {
-    const res = await userActionApi.myComments(1, 50)
+    const res = await userActionApi.myComments(page, commentPageSize.value)
     commentItems.value = res.data.items
+    commentTotal.value = res.data.total
   } catch {
     commentItems.value = []
+    commentTotal.value = 0
   } finally {
     commentLoading.value = false
+  }
+}
+
+async function handleDeleteComment(movieId: number): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '确定要删除这条评论吗？',
+      '删除确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+    deletingMovieId.value = movieId
+    await userActionApi.deleteComment(movieId)
+    ElMessage.success('删除成功')
+    await fetchMyComments(commentPage.value)
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error('删除失败，请稍后重试')
+    }
+  } finally {
+    deletingMovieId.value = null
   }
 }
 
@@ -259,11 +357,75 @@ function handleTabChange(tabName: string | number): void {
   const name = tabName as string
   activeTab.value = name
   if (name === 'comments') {
-    fetchMyComments()
+    commentPage.value = 1
+    fetchMyComments(1)
   } else {
     moviePage.value = 1
     fetchMyMovies(1)
   }
+}
+
+const PASSWORD_UPPER = /[A-Z]/
+const PASSWORD_LOWER = /[a-z]/
+const PASSWORD_DIGIT = /\d/
+
+const passwordDialogVisible = ref(false)
+const passwordLoading = ref(false)
+const passwordFormRef = ref<FormInstance | null>(null)
+const passwordForm = reactive({
+  old_password: '',
+  new_password: '',
+  confirm_password: '',
+})
+
+const validatePasswordComplexity = (_rule: any, value: string, callback: any) => {
+  if (!value) return callback(new Error('请输入新密码'))
+  if (value.length < 6) return callback(new Error('密码至少 6 位'))
+  if (!PASSWORD_UPPER.test(value)) return callback(new Error('必须包含至少一个大写字母'))
+  if (!PASSWORD_LOWER.test(value)) return callback(new Error('必须包含至少一个小写字母'))
+  if (!PASSWORD_DIGIT.test(value)) return callback(new Error('必须包含至少一个数字'))
+  callback()
+}
+
+const validateConfirmPassword = (_rule: any, value: string, callback: any) => {
+  if (!value) return callback(new Error('请再次输入新密码'))
+  if (value !== passwordForm.new_password) return callback(new Error('两次密码不一致'))
+  callback()
+}
+
+const passwordRules: FormRules = {
+  old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+  new_password: [{ required: true, validator: validatePasswordComplexity, trigger: 'blur' }],
+  confirm_password: [{ required: true, validator: validateConfirmPassword, trigger: 'blur' }],
+}
+
+function openPasswordDialog(): void {
+  passwordForm.old_password = ''
+  passwordForm.new_password = ''
+  passwordForm.confirm_password = ''
+  passwordFormRef.value?.resetFields()
+  passwordDialogVisible.value = true
+}
+
+async function handleChangePassword(): Promise<void> {
+  if (!passwordFormRef.value) return
+  await passwordFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    passwordLoading.value = true
+    try {
+      await changePassword(passwordForm.old_password, passwordForm.new_password)
+      ElMessage.success('密码修改成功，即将重新登录')
+      passwordDialogVisible.value = false
+      setTimeout(() => {
+        authStore.logout()
+        router.push('/login')
+      }, 1000)
+    } catch (err: any) {
+      ElMessage.error(err.response?.data?.error || '修改失败，请稍后重试')
+    } finally {
+      passwordLoading.value = false
+    }
+  })
 }
 
 onMounted(() => {
@@ -392,11 +554,17 @@ onMounted(() => {
 .summary-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
   color: #606266;
   font-size: 13px;
   font-weight: 500;
   margin-bottom: 6px;
+}
+
+.summary-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .summary-text {

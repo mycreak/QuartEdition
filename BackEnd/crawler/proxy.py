@@ -114,6 +114,40 @@ def _next_proxy_id() -> int:
     return _proxy_id_counter
 
 
+async def _poll_verification_recovery(page, host: str, port: int) -> bool:
+    """
+    指数退避轮询：验证码点击后检测页面是否恢复。
+
+    轮询节点：5s → 10s → 20s（从点击时起算，累计 35s）
+    任一节点检测到页面标题含"豆瓣"且无异常跳转 → 立即返回 True
+    全部节点失败 → 返回 False
+
+    输入: page (Playwright Page 对象), host, port (仅日志)
+    输出: True=验证通过, False=页面未恢复
+    """
+    checks = [5, 10, 20]
+    for wait_sec in checks:
+        await asyncio.sleep(wait_sec)
+        try:
+            await page.goto(
+                "https://movie.douban.com/",
+                wait_until="domcontentloaded",
+                timeout=10000,
+            )
+            title = await page.title()
+            if "豆瓣" in title:
+                logger.debug(
+                    f"代理测试 {host}:{port} — 验证轮询通过 "
+                    f"(第 {checks.index(wait_sec) + 1}/{len(checks)} 次, "
+                    f"等待 {sum(checks[:checks.index(wait_sec) + 1])}s)"
+                )
+                return True
+        except Exception:
+            continue
+    logger.debug(f"代理测试 {host}:{port} — 验证轮询全部失败")
+    return False
+
+
 class ProxyPool:
     """
     IP 代理池。
@@ -565,6 +599,28 @@ class ProxyPool:
         self._alive = [p for p in self._alive if p.key != proxy.key]
         self._suspicious.pop(proxy.key, None)
 
+    async def _report_ip_ok(self, proxy_key: str) -> None:
+        """
+        由 Cookie 验证后验：报告 IP 正常。
+
+        通过 key (host:port) 查找代理 → report_success()。
+        找不到则静默跳过。
+        """
+        proxy = self.get_by_key(proxy_key)
+        if proxy:
+            await self.report_success(proxy)
+
+    async def _report_ip_fail(self, proxy_key: str) -> None:
+        """
+        由 Cookie 验证后验：报告 IP 不可用，同步状态机。
+
+        通过 key (host:port) 查找代理 → report_failure()。
+        找不到则静默跳过。
+        """
+        proxy = self.get_by_key(proxy_key)
+        if proxy:
+            await self.report_failure(proxy)
+
     # ==================== 校验 ====================
 
     @staticmethod
@@ -629,7 +685,8 @@ class ProxyPool:
         流程：
             1. Playwright → 代理 → movie.douban.com/chart
             2. domcontentloaded → 页面标题含"豆瓣" → 成功
-            3. 等待 15s 检测验证按钮（#sub），有则自动点击 + 再等 45s
+            3. 等待 15s 检测验证按钮（#sub），有则自动点击
+            4. 点击后指数退避轮询（5s→10s→20s），任一检查通过立即返回
 
         参考：scripts/test_paid_proxy.py 的验证逻辑
 
@@ -667,15 +724,21 @@ class ProxyPool:
             if "豆瓣" not in title:
                 return False, f"页面标题异常: {title[:50]}"
 
-            # 检测并点击验证按钮（参考 test_paid_proxy.py）
+            # 检测验证按钮 — 等待最多 15s 看 #sub 是否出现
+            clicked_sub = False
             try:
                 await asyncio.sleep(15)
                 await page.locator("#sub").click(timeout=3000)
-                logger.debug(f"代理测试 {host}:{port} — 检测到验证按钮，已自动点击，等待 45s")
-                await asyncio.sleep(45)
-                elapsed += 60000  # 加 60s 到总耗时
+                clicked_sub = True
+                logger.debug(f"代理测试 {host}:{port} — 检测到验证按钮，已自动点击，开始轮询")
             except Exception:
                 logger.debug(f"代理测试 {host}:{port} — 未触发验证，跳过")
+
+            if clicked_sub:
+                verified = await _poll_verification_recovery(page, host, port)
+                if not verified:
+                    return False, "验证码点击后页面未恢复（可能被反爬拦截）"
+                elapsed += 35000  # 轮询总耗时 ~35s
 
             return True, f"连接成功 (延迟 {elapsed}ms)"
         except Exception as e:
@@ -690,13 +753,16 @@ class ProxyPool:
                 except Exception:
                     pass
 
-    async def health_check(self, concurrency: int = 10) -> Dict[str, int]:
+    async def health_check(self, browser, concurrency: int = 2) -> Dict[str, int]:
         """
-        批量验证 _alive 中所有代理。
+        批量验证 _alive 中所有代理（Playwright 真浏览器，逐个串行避免浏览器资源耗尽）。
 
-        输入：concurrency 并发数
+        输入：browser (Playwright 实例), concurrency 并发数（建议 ≤2）
         输出：{"alive": N, "dead": M, "total": T}
-        副作用：不可用的代理移入 _banned
+        副作用：不可用的代理移入 banned
+
+        注意：不再使用轻量 aiohttp 验证（多数代理会被豆瓣反爬拦截产生假阳性），
+              统一走 Playwright 真浏览器，结果准确但耗时（每代理 15~50s）。
         """
         async with self._lock:
             proxies_to_check = list(self._alive)
@@ -705,6 +771,7 @@ class ProxyPool:
             logger.info("health_check: 无代理需要验证")
             return {"alive": 0, "dead": 0, "total": 0}
 
+        concurrency = max(1, min(concurrency, 3))
         semaphore = asyncio.Semaphore(concurrency)
         dead_count = 0
         alive_count = 0
@@ -712,7 +779,13 @@ class ProxyPool:
         async def _check_one(p: Proxy):
             nonlocal dead_count, alive_count
             async with semaphore:
-                ok = await self.verify_proxy(p.host, p.port, timeout=5.0)
+                ok, _ = await self.verify_proxy_browser(
+                    p.host, p.port,
+                    browser=browser,
+                    username=p.username,
+                    password=p.password,
+                    timeout=15,
+                )
                 if ok:
                     alive_count += 1
                 else:

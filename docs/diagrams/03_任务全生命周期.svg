@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 720" font-family="'Microsoft YaHei','SimHei',sans-serif">
+  <defs>
+    <filter id="shadow"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.10"/></filter>
+    <marker id="arrowOrange" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#f39c12"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#2980b9"/>
+    </marker>
+  </defs>
+
+  <rect width="1050" height="720" fill="#f8f9fc" rx="8"/>
+  <text x="525" y="34" text-anchor="middle" font-size="18" font-weight="bold" fill="#2c3e50">爬虫任务全生命周期：提交 → 调度 → 执行 → 归档</text>
+
+  <!-- 泳道头 -->
+  <rect x="30" y="50" width="100" height="28" rx="4" fill="#3498db"/>
+  <text x="80" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">前端/管理员</text>
+
+  <rect x="150" y="50" width="100" height="28" rx="4" fill="#e67e22"/>
+  <text x="200" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">API 路由</text>
+
+  <rect x="270" y="50" width="100" height="28" rx="4" fill="#e74c3c"/>
+  <text x="320" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">Redis ZSET</text>
+
+  <rect x="390" y="50" width="100" height="28" rx="4" fill="#c0392b"/>
+  <text x="440" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">Puller</text>
+
+  <rect x="510" y="50" width="100" height="28" rx="4" fill="#27ae60"/>
+  <text x="560" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">Worker</text>
+
+  <rect x="630" y="50" width="130" height="28" rx="4" fill="#f39c12"/>
+  <text x="695" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">CrawlerEngine</text>
+
+  <rect x="780" y="50" width="100" height="28" rx="4" fill="#2980b9"/>
+  <text x="830" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">Monitor</text>
+
+  <rect x="900" y="50" width="120" height="28" rx="4" fill="#1abc9c"/>
+  <text x="960" y="68" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">MySQL</text>
+
+  <!-- 竖直泳道线 -->
+  <line x1="130" y1="78" x2="130" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="250" y1="78" x2="250" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="370" y1="78" x2="370" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="490" y1="78" x2="490" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="610" y1="78" x2="610" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="760" y1="78" x2="760" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="880" y1="78" x2="880" y2="680" stroke="#ddd" stroke-width="1" stroke-dasharray="4,2"/>
+
+  <!-- ====== 阶段1: 提交 ====== -->
+  <rect x="30" y="85" width="1022" height="20" rx="3" fill="#f0f4f8"/>
+  <text x="40" y="99" font-size="10" font-weight="bold" fill="#7f8c8d">阶段1: 任务提交与校验</text>
+
+  <!-- 1.1 提交 -->
+  <rect x="155" y="110" width="186" height="28" rx="5" fill="rgba(231,76,60,0.15)" stroke="#e74c3c" stroke-width="1" filter="url(#shadow)"/>
+  <text x="248" y="128" text-anchor="middle" font-size="10" fill="#c0392b">POST /admin/tasks {type, douban_id}</text>
+
+  <!-- 1.2 权限校验 -->
+  <rect x="155" y="148" width="186" height="28" rx="5" fill="rgba(52,152,219,0.12)" stroke="#3498db" stroke-width="1"/>
+  <text x="248" y="166" text-anchor="middle" font-size="10" fill="#2980b9">permission: crawler:task:write</text>
+
+  <!-- 1.3 去重检查（两路） -->
+  <rect x="155" y="186" width="88" height="28" rx="5" fill="rgba(46,204,113,0.12)" stroke="#2ecc71" stroke-width="1"/>
+  <text x="199" y="203" text-anchor="middle" font-size="9" fill="#27ae60">查 MySQL done?</text>
+
+  <rect x="253" y="186" width="88" height="28" rx="5" fill="rgba(230,126,34,0.12)" stroke="#e67e22" stroke-width="1"/>
+  <text x="297" y="203" text-anchor="middle" font-size="9" fill="#d35400">查 Redis 去重?</text>
+
+  <!-- 1.4 inject_subtask -->
+  <rect x="155" y="225" width="186" height="28" rx="5" fill="rgba(155,89,182,0.12)" stroke="#9b59b6" stroke-width="1" filter="url(#shadow)"/>
+  <text x="248" y="243" text-anchor="middle" font-size="10" fill="#8e44ad">inject_subtask()</text>
+
+  <!-- 1.5 ZADD -->
+  <text x="355" y="210" font-size="8" fill="#888">ZADD</text>
+  <text x="355" y="240" font-size="8" fill="#888">SET dedup EX 3600</text>
+  <line x1="341" y1="238" x2="388" y2="130" stroke="#e67e22" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <rect x="276" y="114" width="106" height="18" rx="3" fill="rgba(231,76,60,0.2)"/>
+  <text x="329" y="127" text-anchor="middle" font-size="8" fill="#c0392b">ZADD delay_queue</text>
+
+  <!-- 1.6 INSERT history -->
+  <line x1="341" y1="238" x2="960" y2="180" stroke="#1abc9c" stroke-width="1" stroke-dasharray="3,3"/>
+  <rect x="905" y="162" width="110" height="18" rx="3" fill="rgba(26,188,156,0.2)"/>
+  <text x="960" y="174" text-anchor="middle" font-size="8" fill="#16a085">INSERT task_history</text>
+  <text x="960" y="186" text-anchor="middle" font-size="7" fill="#aaa">status=submitted</text>
+
+  <!-- 返回 -->
+  <rect x="155" y="264" width="186" height="24" rx="5" fill="rgba(46,204,113,0.2)" stroke="#2ecc71" stroke-width="1"/>
+  <text x="248" y="280" text-anchor="middle" font-size="10" fill="#27ae60">201 {task_id, execute_at, url}</text>
+
+  <!-- ====== 阶段2: 调度 ====== -->
+  <rect x="30" y="302" width="1022" height="20" rx="3" fill="#f0f4f8"/>
+  <text x="40" y="316" font-size="10" font-weight="bold" fill="#7f8c8d">阶段2: 延迟调度 (Puller)</text>
+
+  <rect x="395" y="330" width="186" height="28" rx="5" fill="rgba(192,57,43,0.12)" stroke="#c0392b" stroke-width="1" filter="url(#shadow)"/>
+  <text x="488" y="348" text-anchor="middle" font-size="10" fill="#c0392b">ZRANGEBYSCORE + ZREM (Lua)</text>
+
+  <rect x="395" y="368" width="186" height="28" rx="5" fill="rgba(192,57,43,0.12)" stroke="#c0392b" stroke-width="1"/>
+  <text x="488" y="385" text-anchor="middle" font-size="10" fill="#c0392b">task_queue.put()</text>
+
+  <rect x="395" y="406" width="186" height="28" rx="5" fill="rgba(192,57,43,0.08)" stroke="#ddd" stroke-width="1"/>
+  <text x="488" y="420" text-anchor="middle" font-size="9" fill="#888">背压: 队列≥80% → sleep</text>
+  <text x="488" y="432" text-anchor="middle" font-size="9" fill="#888">空转: 指数退避 0.1→5.0s</text>
+
+  <!-- ====== 阶段3: 执行 ====== -->
+  <rect x="30" y="448" width="1022" height="20" rx="3" fill="#f0f4f8"/>
+  <text x="40" y="462" font-size="10" font-weight="bold" fill="#7f8c8d">阶段3: 任务执行 (Worker + CrawlerEngine)</text>
+
+  <rect x="515" y="476" width="186" height="28" rx="5" fill="rgba(39,174,96,0.12)" stroke="#27ae60" stroke-width="1" filter="url(#shadow)"/>
+  <text x="608" y="494" text-anchor="middle" font-size="10" fill="#1e8449">task_queue.get() → execute(task)</text>
+
+  <rect x="515" y="514" width="186" height="28" rx="5" fill="rgba(39,174,96,0.08)" stroke="#ddd" stroke-width="1" filter="url(#shadow)"/>
+  <text x="608" y="531" text-anchor="middle" font-size="10" fill="#555">WorkerEvent(STARTED) → Monitor</text>
+
+  <!-- CrawlerEngine 展开 -->
+  <line x1="701" y1="528" x2="750" y2="528" stroke="#f39c12" stroke-width="1.5" marker-end="url(#arrowOrange)"/>
+  <rect x="750" y="476" width="88" height="28" rx="5" fill="rgba(243,156,18,0.15)" stroke="#f39c12" stroke-width="1"/>
+  <text x="794" y="494" text-anchor="middle" font-size="10" fill="#d68910">Fetcher</text>
+
+  <rect x="845" y="476" width="88" height="28" rx="5" fill="rgba(243,156,18,0.15)" stroke="#f39c12" stroke-width="1"/>
+  <text x="889" y="494" text-anchor="middle" font-size="10" fill="#d68910">Parser</text>
+
+  <rect x="940" y="476" width="88" height="28" rx="5" fill="rgba(26,188,156,0.15)" stroke="#1abc9c" stroke-width="1"/>
+  <text x="984" y="494" text-anchor="middle" font-size="10" fill="#16a085">Storage</text>
+
+  <!-- Fetcher-Parser-Storage 连接 -->
+  <line x1="838" y1="490" x2="845" y2="490" stroke="#f39c12" stroke-width="1" marker-end="url(#arrowOrange)"/>
+  <line x1="933" y1="490" x2="940" y2="490" stroke="#f39c12" stroke-width="1" marker-end="url(#arrowOrange)"/>
+
+  <!-- 双引擎 -->
+  <text x="794" y="520" text-anchor="middle" font-size="7" fill="#aaa">BrowserFetcher</text>
+  <text x="794" y="530" text-anchor="middle" font-size="7" fill="#aaa">ApiFetcher</text>
+
+  <!-- 数据写入 -->
+  <line x1="984" y1="490" x2="984" y2="550" stroke="#1abc9c" stroke-width="1" stroke-dasharray="3,3"/>
+  <rect x="905" y="546" width="158" height="20" rx="3" fill="rgba(26,188,156,0.1)"/>
+  <text x="984" y="560" text-anchor="middle" font-size="8" fill="#16a085">INSERT/UPDATE MySQL + MongoDB</text>
+
+  <!-- Worker 冷却 -->
+  <rect x="515" y="580" width="186" height="28" rx="5" fill="rgba(39,174,96,0.08)" stroke="#ddd" stroke-width="1"/>
+  <text x="608" y="594" text-anchor="middle" font-size="9" fill="#888">WorkerEvent(SUCCESS/FAILURE) → Monitor</text>
+  <text x="608" y="606" text-anchor="middle" font-size="9" fill="#888">冷却 random(150, 180)s → 取下个任务</text>
+
+  <!-- ====== 阶段4: 归档 ====== -->
+  <rect x="30" y="620" width="1022" height="20" rx="3" fill="#f0f4f8"/>
+  <text x="40" y="634" font-size="10" font-weight="bold" fill="#7f8c8d">阶段4: 归档与通知 (Monitor)</text>
+
+  <rect x="785" y="648" width="186" height="24" rx="5" fill="rgba(41,128,185,0.12)" stroke="#2980b9" stroke-width="1" filter="url(#shadow)"/>
+  <text x="878" y="664" text-anchor="middle" font-size="10" fill="#2471a3">消费 WorkerEvent · UPDATE task_history</text>
+
+  <line x1="878" y1="672" x2="960" y2="668" stroke="#1abc9c" stroke-width="1.2"/>
+  <rect x="905" y="648" width="110" height="24" rx="4" fill="rgba(26,188,156,0.12)" stroke="#1abc9c" stroke-width="1"/>
+  <text x="960" y="664" text-anchor="middle" font-size="9" fill="#16a085">status: done/failed</text>
+
+  <rect x="785" y="678" width="186" height="22" rx="4" fill="rgba(142,68,173,0.08)" stroke="#ddd" stroke-width="1"/>
+  <text x="878" y="694" text-anchor="middle" font-size="9" fill="#888">WS 广播管理员 · DELETE去重key</text>
+
+
+</svg>

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>QuartEdition 系统架构图</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      padding: 24px;
+    }
+    h1 { text-align: center; margin-bottom: 8px; color: #1a1a2e; }
+    .subtitle { text-align: center; color: #666; margin-bottom: 32px; }
+    .section {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 32px;
+      padding: 24px;
+      page-break-inside: avoid;
+    }
+    .section h2 {
+      margin-bottom: 16px;
+      color: #16213e;
+      border-bottom: 2px solid #0f3460;
+      padding-bottom: 8px;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+    .row { display: flex; gap: 24px; flex-wrap: wrap; }
+    .row .section { flex: 1; min-width: 480px; }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .section { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>QuartEdition 系统架构设计</h1>
+<p class="subtitle">豆瓣电影数据采集与管理平台 · 架构矢量图</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>一、系统全栈分层架构</h2>
+  <div class="mermaid">
+graph TB
+    subgraph USER["👤 用户浏览器"]
+        direction LR
+        HTTP["HTTP :80"]
+        WSS["WebSocket /ws"]
+    end
+
+    subgraph FE["🖥️ 前端 (Vue 3 + Vite + Element Plus)"]
+        direction TB
+        ROUTER["Router<br/>路由守卫 permissionCheck"]
+        VIEWS["Views<br/>Dashboard / Tasks / Movies / Infra"]
+        STORES["Stores (Pinia)<br/>authStore"]
+        API_L["API 封装层<br/>client.ts token注入 · ws.ts 心跳重连"]
+        ROUTER --> VIEWS
+        VIEWS --> STORES
+        STORES --> API_L
+    end
+
+    subgraph NGINX["🔀 Nginx :80"]
+        SPA["静态文件托管<br/>history mode"]
+        PROXY["反向代理<br/>/api/* → backend:8000"]
+        WS_PROXY["WebSocket 代理<br/>/ws/* → backend:8000"]
+    end
+
+    subgraph BE["⚙️ 后端 (Quart + Hypercorn :8000)"]
+        direction TB
+
+        subgraph ROUTES["接入层 Routes"]
+            R_PUB["public/ auth"]
+            R_USER["user/ movies reviews"]
+            R_ADMIN["admin/ tasks failures infra style_tags"]
+        end
+
+        subgraph MIDDLEWARE["中间件层"]
+            JWT["JWT 认证<br/>require_permission('code')"]
+            CORS["CORS 跨域"]
+            ERR["ServiceError 统一异常"]
+            LOG["JSON 结构化日志"]
+        end
+
+        subgraph SERVICES["业务层 Services"]
+            AUTH_S["AuthService"]
+            MOVIE_S["MovieService"]
+            REVIEW_S["ReviewService"]
+            FAIL_S["TaskFailureService"]
+            STYLE_S["StyleTagService"]
+        end
+
+        subgraph CRAWLER["爬虫引擎 Crawler"]
+            ENGINE["CrawlerEngine<br/>8种任务类型路由"]
+            API_F["ApiFetcher<br/>aiohttp"]
+            BROW_F["BrowserFetcher<br/>Playwright Chromium"]
+            PARSER["Parser<br/>HTML/JSON 解析"]
+            STOR["Storage<br/>MySQL/MongoDB"]
+        end
+
+        subgraph BG["后台调度 Background"]
+            PULLER["Puller 单协程<br/>Redis ZSET → Queue"]
+            Q["asyncio.Queue<br/>maxsize=45"]
+            POOL["BrowserPool<br/>5 Worker 协程"]
+            MONITOR["Monitor 单协程<br/>每10s 采集+事件+广播"]
+        end
+
+        subgraph DB_LAYER["数据访问层"]
+            DBV2["DatabaseLayerV2<br/>统一 CRUD + 事务"]
+        end
+    end
+
+    subgraph STORAGE["🗄️ 数据存储"]
+        MYSQL[("MySQL 8.0<br/>21 张表")]
+        MONGO[("MongoDB 7.0<br/>reviews / comments")]
+        REDIS[("Redis 7.0<br/>ZSET队列 / 限流 / 缓存")]
+    end
+
+    subgraph EXTERNAL["☁️ 外部服务"]
+        TOS["火山引擎 TOS<br/>海报 · 头像"]
+        AI["DeepSeek AI<br/>总结 · 风格 · 词云"]
+        DOUBAN[("豆瓣 Web<br/>电影数据源")]
+    end
+
+    HTTP --> NGINX
+    WSS --> NGINX
+    NGINX --> ROUTES
+    ROUTES --> JWT
+    JWT --> SERVICES
+    SERVICES --> DB_LAYER
+    DB_LAYER --> MYSQL
+    DB_LAYER --> MONGO
+    DB_LAYER --> REDIS
+    CRAWLER --> DOUBAN
+    CRAWLER --> AI
+    STOR --> TOS
+    PULLER --> REDIS
+    Q --> POOL
+    POOL --> ENGINE
+    MONITOR -. WS广播 .-> WSS
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>二、任务生命周期：应用层 → 调度中心 → 爬虫引擎</h2>
+  <div class="mermaid">
+sequenceDiagram
+    actor Admin as 👤 管理员
+    participant Route as 📡 task_routes
+    participant DB as 🗄️ MySQL
+    participant Redis as 🔴 Redis ZSET
+    participant Puller as 🔄 Puller
+    participant Queue as 📦 asyncio.Queue
+    participant Worker as ⚡ BrowserPool (5 Worker)
+    participant Crawler as 🕷️ CrawlerEngine
+    participant Douban as 🌐 豆瓣
+    participant Monitor as 📊 Monitor
+    participant Frontend as 🖥️ 前端仪表盘
+
+    Admin->>Route: POST /admin/tasks {type, douban_id, ...}
+    Route->>Route: 校验权限 · 生成 snowflake ID
+
+    par 应用层：投递任务
+        Route->>DB: INSERT task_history (status=submitted)
+        Route->>Redis: ZADD delay_queue { task_json, execute_at }
+        Route-->>Admin: 201 { task_id, execute_at, message }
+    end
+
+    Note over Redis, Puller: ═══ 调度中心 ═══
+
+    loop 每 0.1s 检查
+        Puller->>Puller: 背压检查 (队列饱和度>80%→暂停)
+    end
+    Puller->>Redis: ZRANGEBYSCORE + ZREM (Lua 原子)
+    Redis-->>Puller: [task_json, task_json, ...]
+    Puller->>Queue: put(task)
+    Queue-->>Puller: ✓
+
+    loop 空闲 Worker 取任务
+        Worker->>Queue: get()
+        Queue-->>Worker: task_json
+        Worker->>Worker: busy_counter++ · busy_since=now
+
+        Note over Worker, Crawler: ═══ 爬虫引擎 ═══
+
+        Worker->>Crawler: execute(task)
+        Crawler->>Crawler: json.loads → 路由到对应 handler
+        alt movie_crawl
+            Crawler->>Douban: ApiFetcher → 豆瓣榜单 API
+            Douban-->>Crawler: douban_id 列表
+            Crawler->>Redis: ZADD 子任务 (movie_scrape_task)
+        else movie_scrape_task
+            Crawler->>Douban: BrowserFetcher → Playwright 渲染详情页
+            Douban-->>Crawler: HTML
+            Crawler->>DB: Storage → movies/people/credits/ratings
+        else review_body_crawl
+            Crawler->>Douban: ApiFetcher → 长评正文 API
+            Douban-->>Crawler: JSON
+            Crawler->>DB: MongoDB (reviews)
+        else ai_review_summary
+            Crawler->>DB: 拉取长评
+            Crawler->>DB: DeepSeek AI → 总结 + 5维度风格标签
+            Crawler->>DB: INSERT movie_style_tag / movie_style
+            Crawler->>DB: asyncio.create_task(相似度检测)
+        end
+
+        alt 成功
+            Crawler-->>Worker: ✓
+            Worker->>Monitor: WorkerEvent(SUCCESS)
+            Monitor->>DB: UPDATE task_history status=done
+        else 失败
+            Crawler-->>Worker: ✗ 异常
+            Worker->>Monitor: WorkerEvent(FAILURE, kind, reason)
+            Monitor->>DB: INSERT task_failures
+            Monitor->>DB: UPDATE task_history status=failed
+        end
+
+        Worker->>Worker: busy_counter-- · 进入随机冷却 120~300s
+    end
+
+    loop 每 10s
+        Monitor->>Monitor: 采集 Puller/Worker/Queue/CPU/DB 指标
+        Monitor->>Frontend: WS broadcast system_status
+    end
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>三、调度中心内部机制</h2>
+  <div class="mermaid">
+graph LR
+    subgraph REDIS_Z["Redis ZSET 延迟队列"]
+        Z1["Score: 1716200000<br/>Member: {id:101, type:movie_crawl}"]
+        Z2["Score: 1716200001<br/>Member: {id:102, type:review_crawl}"]
+        Z3["Score: 1716200002<br/>Member: {id:103, type:comment_crawl}"]
+    end
+
+    subgraph PULLER_BOX["Puller 拉取器"]
+        direction TB
+        P1["while True:"]
+        P2["① 背压检查<br/>qsize≥80%Qmax → 暂停<br/>qsize≤60%Qmax → 恢复"]
+        P3["② 拉取到期任务<br/>Lua: ZRANGEBYSCORE + ZREM<br/>batch_size=10"]
+        P4["③ 空结果 → 指数退避<br/>0.1s → 0.15s → 0.23s → ... → 5s"]
+        P1-->P2-->P3-->P4-->P1
+    end
+
+    subgraph QUEUE_BOX["asyncio.Queue<br/>maxsize=45"]
+        Q1["task 1"]
+        Q2["task 2"]
+        Q3["..."]
+    end
+
+    subgraph POOL_BOX["BrowserPool 5 Worker"]
+        direction TB
+        W0["Worker-0<br/>忙碌: 详情爬取中..."]
+        W1["Worker-1<br/>冷却: 剩余 185s"]
+        W2["Worker-2<br/>空闲: 等待队列"]
+        W3["Worker-3<br/>冷却: 剩余 92s"]
+        W4["Worker-4<br/>空闲: 等待队列"]
+    end
+
+    subgraph MONITOR_BOX["Monitor 监控"]
+        M1["采集指标"]
+        M2["消费事件队列"]
+        M3["WS 广播 → 仪表盘"]
+    end
+
+    REDIS_Z -->|"batch_pop_due_tasks(now, 10)"| PULLER_BOX
+    PULLER_BOX -->|"put(task)"| QUEUE_BOX
+    QUEUE_BOX -->|"get()"| POOL_BOX
+    POOL_BOX -. "WorkerEvent" .-> MONITOR_BOX
+    MONITOR_BOX -. "WS broadcast" .-> FRONTEND["🖥️ 前端仪表盘"]
+
+    style PULLER_BOX fill:#e8f5e9
+    style QUEUE_BOX fill:#fff3e0
+    style POOL_BOX fill:#e3f2fd
+    style MONITOR_BOX fill:#fce4ec
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>四、Worker 生命周期与反爬设计</h2>
+  <div class="mermaid">
+stateDiagram-v2
+    [*] --> 空闲_waiting: 启动
+    空闲_waiting --> 忙碌_executing: task_queue.get()
+
+    state 忙碌_executing {
+        [*] --> 解析任务类型
+        解析任务类型 --> Api请求: api类型
+        解析任务类型 --> 浏览器渲染: browser类型
+        解析任务类型 --> AI调用: ai类型
+        Api请求 --> 解析HTML_JSON
+        浏览器渲染 --> 解析HTML_JSON
+        AI调用 --> 解析AI响应
+        解析HTML_JSON --> 写入数据库
+        写入数据库 --> [*]
+    }
+
+    忙碌_executing --> 冷却_cooldown: 成功 → 随机冷却 120~300s
+    忙碌_executing --> 冷却_cooldown: 失败 → 上报 Monitor → 冷却
+    忙碌_executing --> 死亡: asyncio.CancelledError
+
+    冷却_cooldown --> 空闲_waiting: cooldown 到期
+
+    死亡 --> 空闲_waiting: Monitor 检测 → restart_dead_workers()
+
+    note right of 冷却_cooldown
+        反爬核心设计：
+        5 Worker 各自独立冷却
+        120~300s 随机错峰
+        冷却期间不占 busy
+        Puller 继续拉新任务
+    end note
+
+    note left of 空闲_waiting
+        idle = alive - busy - cooldown
+        正常时大部分 Worker 在此状态
+    end note
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>五、爬虫引擎双引擎架构 + 8 种任务类型</h2>
+  <div class="mermaid">
+graph TB
+    TASK["Worker 传入 task JSON"]
+
+    ENGINE["CrawlerEngine.execute(task)"]
+    TASK --> ENGINE
+
+    ENGINE -->|"movie_crawl"| MC["ApiFetcher<br/>豆瓣榜单 API<br/>↓<br/>Parser: douban_id 列表<br/>↓<br/>Storage: douban_ids 表<br/>↓<br/>ZADD 子任务到 Redis"]
+
+    ENGINE -->|"movie_scrape_task"| MST["BrowserFetcher<br/>Playwright 渲染详情页<br/>↓<br/>Parser: 电影信息+评分<br/>↓<br/>Storage: movies/ratings<br/>↓<br/>自动注入 director_crawl 子任务"]
+
+    ENGINE -->|"movie_detail_crawl"| MDC["BrowserFetcher<br/>详情页+演职人员页<br/>↓<br/>Parser: 全量数据<br/>↓<br/>Storage: movies/people/credits/regions/genres"]
+
+    ENGINE -->|"review_crawl"| RC["BrowserFetcher<br/>长评列表页<br/>↓<br/>Parser: 摘要列表<br/>↓<br/>Storage: movie_review 待爬表"]
+
+    ENGINE -->|"review_body_crawl"| RBC["ApiFetcher<br/>长评正文 JSON API<br/>↓<br/>Parser: 全文+评分<br/>↓<br/>Storage: MongoDB reviews"]
+
+    ENGINE -->|"comment_crawl"| CC["BrowserFetcher<br/>短评列表页<br/>↓<br/>Parser: 评论列表<br/>↓<br/>Storage: MongoDB comments"]
+
+    ENGINE -->|"director_crawl"| DC["BrowserFetcher<br/>演职人员页<br/>↓<br/>Parser: 人员列表<br/>↓<br/>Storage: people/credits"]
+
+    ENGINE -->|"ai_wordcloud<br/>ai_review_summary"| AI_T["ApiFetcher (拉数据)<br/>↓<br/>DeepSeek AI (生成总结/词云)<br/>↓<br/>Storage: review_summary<br/>movie_style_tag/style<br/>↓<br/>asyncio.create_task(相似度检测)"]
+
+    subgraph RESOURCES["共享资源"]
+        PROXY["ProxyPool<br/>alive↔suspicious↔banned"]
+        COOKIE["CookieManager<br/>active/suspicious/banned"]
+        IDENTITY["IdentityManager<br/>Cookie+IP 绑定"]
+        API_SEM["ApiFetcher Semaphore<br/>并发控制"]
+        BROW_SEM["BrowserFetcher Semaphore<br/>并发控制"]
+    end
+
+    MC -.-> PROXY
+    MST -.-> COOKIE
+    MST -.-> IDENTITY
+    RC -.-> COOKIE
+    RC -.-> PROXY
+    CC -.-> COOKIE
+
+    style ENGINE fill:#0f3460,color:#fff
+    style AI_T fill:#e3f2fd
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>六、数据库拓扑：3 库全景</h2>
+  <div class="mermaid">
+erDiagram
+    users ||--o{ user_permissions : "1:N"
+    permissions ||--o{ user_permissions : "1:N"
+    users ||--o{ task_history : "1:N"
+
+    movies ||--o{ movie_ratings : "1:1"
+    movies ||--o{ movie_credits : "1:N"
+    movies ||--o{ movie_genres : "1:N"
+    movies ||--o{ movie_regions : "1:N"
+    movies ||--o{ movie_style : "1:N"
+    movies ||--o{ review_summary : "1:1"
+
+    people ||--o{ movie_credits : "1:N"
+    movie_style_tag ||--o{ movie_style : "1:N"
+
+    douban_ids ||--o{ crawl_progress : "多对多 via type_num+interval_id"
+    movie_review ||--o{ movies : "N:1 via movie_id"
+
+    users {
+        int id PK
+        bigint uuid UK
+        varchar username UK
+        varchar password_hash
+        varchar display_name
+        varchar avatar_url
+        tinyint is_active
+    }
+
+    permissions {
+        varchar code PK
+        varchar name
+        varchar description
+    }
+
+    movies {
+        int id PK
+        varchar douban_id
+        varchar title
+        varchar original_title
+        int release_year
+        varchar release_date
+        int duration
+        varchar poster_url
+        tinyint is_published
+    }
+
+    movie_style_tag {
+        int id PK
+        varchar name
+        varchar dimension
+        tinyint review_status
+        int merged_to_tag_id
+    }
+
+    task_history {
+        bigint id PK "(snowflake)"
+        int admin_id FK
+        varchar task_type
+        varchar task_category
+        json task_params
+        varchar status
+        int elapsed_ms
+    }
+
+    task_failures {
+        int id PK
+        bigint task_id
+        varchar kind
+        varchar failure_layer
+        varchar status
+        varchar scope
+        int retry_count
+        json snapshot
+    }
+  </div>
+  <div class="mermaid" style="margin-top:16px">
+graph LR
+    subgraph MYSQL["🐬 MySQL 8.0 — 21 张表"]
+        direction TB
+        CORE["核心业务<br/>movies / people / regions<br/>movie_ratings / movie_credits<br/>movie_genres / movie_regions"]
+        AUTH["认证授权<br/>users / permissions<br/>user_permissions"]
+        TASK["任务调度<br/>task_history / task_failures<br/>douban_ids / crawl_progress<br/>movie_review"]
+        VERSION["版本历史<br/>movies_history / people_history<br/>movie_credits_history<br/>movie_genres_history<br/>movie_regions_history"]
+        STYLE["风格标签<br/>movie_style_tag / movie_style<br/>review_summary"]
+    end
+
+    subgraph MONGO["🍃 MongoDB — 2 集合"]
+        REVIEWS["reviews (长评全文)<br/>{ movie_id, author, content, rating, is_published }"]
+        COMMENTS["comments (短评)<br/>{ movie_id, author, content, rating, is_published }"]
+    end
+
+    subgraph REDIS_DB["🔴 Redis — 多模式"]
+        ZSET["ZSET: crawler:delay_queue<br/>延迟任务队列 score=execute_at"]
+        RATE["限流计数器<br/>ratelimit:* / crawler:last_task_time"]
+        CACHE["词云缓存<br/>wordcloud:*"]
+        DEDUP["去重 Key<br/>crawler:dedup:*"]
+        ALERT["告警窗口<br/>monitor:storage_failures"]
+    end
+
+    MYSQL --- MONGO --- REDIS_DB
+  </div>
+</div>
+
+<div style="text-align:center; color:#999; margin-top:32px; font-size:13px;">
+  QuartEdition · 豆瓣电影数据采集与管理平台 · 架构矢量图<br/>
+  导出: 浏览器右键打印 → 另存为 PDF | Mermaid 源码可直接嵌入文档
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: true, htmlLabels: true },
+    sequence: { useMaxWidth: true },
+    er: { useMaxWidth: true },
+  });
+</script>
+</body>
+</html>

@@ -222,23 +222,25 @@ async def get_my_comments():
     review_svc = _get_review_service()
     items, total = await review_svc.get_comments_by_user_id(user_id, page=page, page_size=page_size)
 
-    # 批量补 movie title
+    # 批量补 movie 信息（title / poster_url / release_year）
     movie_ids = list(set(it["movie_id"] for it in items if it.get("movie_id")))
-    title_map: dict = {}
+    movie_map: dict = {}
     if movie_ids:
         from services.movie_service import MovieService
         raw = current_app.services.db.raw_mysql()
         placeholders = ",".join(["%s"] * len(movie_ids))
         rows = await raw.execute_query(
-            f"SELECT id, title FROM movies WHERE id IN ({placeholders})",
+            f"SELECT id, title, poster_url, release_year FROM movies WHERE id IN ({placeholders})",
             tuple(movie_ids),
         )
-        title_map = {r["id"]: r["title"] for r in rows}
+        movie_map = {r["id"]: r for r in rows}
 
     result = [
         {
             "movie_id": it.get("movie_id"),
-            "title": title_map.get(it.get("movie_id")),
+            "title": movie_map.get(it.get("movie_id"), {}).get("title"),
+            "poster_url": movie_map.get(it.get("movie_id"), {}).get("poster_url"),
+            "release_year": movie_map.get(it.get("movie_id"), {}).get("release_year"),
             "text": it.get("text", ""),
             "rating": float(it["rating"]) if it.get("rating") else None,
             "date": it.get("date"),

@@ -51,8 +51,8 @@ class PullerConfig(BaseSettings):
     batch_size: int = 10
 
     task_cooldown_seconds: float = 2.0
-    worker_rest_min: float = 150.0
-    worker_rest_max: float = 250.0
+    worker_rest_min: float = 120.0
+    worker_rest_max: float = 180.0
 
 
 # 全局配置单例 — 自动读 .env 中 PULLER_* 变量

@@ -32,6 +32,7 @@ export interface CookieAccount {
   platform: string
   remark?: string
   allowed_regions: string[]
+  bound_admin_ids: number[]
   dbcl2_preview: string
   saved_at: string
   state: 'active' | 'suspicious' | 'banned'
@@ -108,7 +109,7 @@ export const adminCookieApi = {
   }) =>
     client.post<{ success: boolean; account_id: string }>('/admin/cookies', data),
 
-  update: (id: string, data: { label?: string; remark?: string; platform?: string; enabled?: boolean; allowed_regions?: string[] }) =>
+  update: (id: string, data: { label?: string; remark?: string; platform?: string; enabled?: boolean; allowed_regions?: string[]; bound_admin_ids?: number[] }) =>
     client.patch<{ success: boolean }>(`/admin/cookies/${id}`, data),
 
   remove: (accountId: string) =>

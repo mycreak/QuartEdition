@@ -207,6 +207,27 @@ class AuthService:
         except (jwt.InvalidTokenError, KeyError, ValueError):
             return None
 
+    async def change_password(self, user_id: int, old_password: str, new_password: str) -> None:
+        """
+        修改用户密码：验证原密码 → 生成新哈希 → 更新。
+
+        输入：user_id, old_password（明文）, new_password（明文）
+        异常：NotFoundError       — 用户不存在
+              AuthenticationError — 原密码错误
+        副作用：UPDATE users SET password_hash = ...
+        注意：Pydantic 层已校验 new_password 复杂度（大小写字母+数字≥6位）
+        """
+        user = await self.get_user(user_id)
+        if not bcrypt.checkpw(old_password.encode("utf-8"), user.password_hash.encode("utf-8")):
+            raise AuthenticationError("原密码错误")
+
+        new_hash = bcrypt.hashpw(
+            new_password.encode("utf-8"),
+            bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+        ).decode("utf-8")
+        await self.db.update("users", {"id": user_id}, {"password_hash": new_hash})
+        logger.info(f"用户密码已修改: user_id={user_id}")
+
     # ═══════════════════════════════════════
     # 权限
     # ═══════════════════════════════════════

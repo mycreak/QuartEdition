@@ -1,17 +1,53 @@
 <template>
   <div class="home-page">
+    <!-- ═══════════════════════════════════════════════════════════
+         左侧固定：猜你喜欢
+         ═══════════════════════════════════════════════════════════ -->
+    <aside class="recommend-sidebar">
+      <div class="recommend-header">
+        <h2 class="section-title">猜你喜欢</h2>
+        <el-button :icon="Refresh" :loading="recommendLoading" @click="fetchRecommend" text size="small">
+          刷新
+        </el-button>
+      </div>
 
-    <!-- ── Tab 切换 ── -->
-    <el-tabs v-model="activeTab" class="home-tabs" @tab-change="handleTabChange">
-      <el-tab-pane label="推荐" name="recommend" />
-      <el-tab-pane label="搜索" name="search" />
-    </el-tabs>
+      <div v-loading="recommendLoading" class="recommend-list">
+        <ErrorAlert :message="recommendError" @close="recommendError = ''" />
+        <template v-if="!recommendLoading && !recommendItems.length && !recommendError">
+          <div class="empty-state">
+            <el-icon :size="32"><Search /></el-icon>
+            <p>暂无推荐</p>
+          </div>
+        </template>
+        <div
+          v-for="item in recommendItems"
+          :key="item.movie_id"
+          class="recommend-item"
+          @click="router.push(`/movies/${item.movie_id}`)"
+        >
+          <div class="recommend-poster">
+            <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" referrerpolicy="no-referrer" />
+            <el-icon v-else :size="28"><VideoCamera /></el-icon>
+          </div>
+          <div class="recommend-info">
+            <div class="recommend-title">{{ item.title }}</div>
+            <div class="recommend-meta">
+              <span v-if="item.release_year">{{ item.release_year }}</span>
+              <span v-if="item.rating" class="recommend-rating">
+                <el-icon :size="12"><StarFilled /></el-icon>
+                {{ item.rating.toFixed(1) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
 
     <!-- ═══════════════════════════════════════════════════════════
-         推荐 Tab
+         右侧主内容区
          ═══════════════════════════════════════════════════════════ -->
-    <template v-if="activeTab === 'recommend'">
-      <!-- ── 片单轮播 ── -->
+    <div class="main-content">
+      <!-- 1. 片单轮播 -->
       <div v-if="playlists.length" class="playlist-carousel">
         <el-carousel :interval="5000" trigger="click" height="320px" arrow="always" indicator-position="none">
           <el-carousel-item v-for="pl in playlists" :key="pl.id">
@@ -29,44 +65,10 @@
         </el-carousel>
       </div>
       <div v-else class="playlist-carousel-placeholder">
-        <el-empty description="片单轮播 — 管理员发布后展示" :image-size="80" />
+        <el-empty description="现在还没有片单，敬请期待！" :image-size="100" />
       </div>
 
-      <el-divider />
-
-      <!-- ── 猜你喜欢 ── -->
-      <div class="recommend-header">
-        <h2 class="section-title">猜你喜欢</h2>
-        <el-button :icon="Refresh" :loading="recommendLoading" @click="fetchRecommend">
-          刷新
-        </el-button>
-      </div>
-
-      <div v-loading="recommendLoading" class="movie-grid" :class="{ 'is-empty': !recommendLoading && !recommendItems.length }">
-        <template v-if="!recommendLoading && !recommendItems.length && !recommendError">
-          <div class="empty-state">
-            <el-icon :size="48"><Search /></el-icon>
-            <p>暂无推荐数据</p>
-          </div>
-        </template>
-        <ErrorAlert :message="recommendError" @close="recommendError = ''" class="mb-4" />
-        <MovieCard
-          v-for="item in recommendItems"
-          :key="item.movie_id"
-          :movie="{ id: item.movie_id, douban_id: item.douban_id, title: item.title, poster_url: item.poster_url, release_year: item.release_year, rating: item.rating ? { average: item.rating, count: 0 } : undefined, genres: [] }"
-        />
-      </div>
-    </template>
-
-    <!-- ═══════════════════════════════════════════════════════════
-         搜索 Tab
-         ═══════════════════════════════════════════════════════════ -->
-    <template v-else>
-      <div class="home-hero">
-        <h1 class="home-title">电影数据库</h1>
-        <p class="home-subtitle">浏览豆瓣电影数据，发现精彩影片</p>
-      </div>
-
+      <!-- 2. 搜索栏 -->
       <div class="home-filters">
         <el-input
           v-model="keyword"
@@ -76,7 +78,6 @@
           class="search-input"
           @clear="handleFilterChange"
           @keyup.enter="handleFilterChange"
-          @blur="handleFilterChange"
         />
         <el-select
           v-model="selectedType"
@@ -108,7 +109,7 @@
         </el-select>
         <el-input
            v-model="selectedYearInput"
-           placeholder="输入年份"
+           placeholder="年份"
            clearable
            class="filter-select"
            @change="handleYearChange"
@@ -116,7 +117,7 @@
          />
         <el-select
           v-model="selectedRating"
-          placeholder="全部评分"
+          placeholder="评分"
           clearable
           class="filter-select"
           @change="handleFilterChange"
@@ -130,30 +131,33 @@
         </el-select>
       </div>
 
-      <ErrorAlert :message="store.error" @close="store.error = ''" />
+      <!-- 3. 影片列表 -->
+      <section class="movie-section">
+        <ErrorAlert :message="store.error" @close="store.error = ''" />
 
-      <div v-loading="store.loading" class="movie-grid" :class="{ 'is-empty': !store.loading && !store.movies.length }">
-        <template v-if="!store.loading && !store.movies.length && !store.error">
-          <div class="empty-state">
-            <el-icon :size="48"><Search /></el-icon>
-            <p>没有找到匹配的电影</p>
-          </div>
-        </template>
-        <MovieCard
-          v-for="movie in store.movies"
-          :key="movie.id"
-          :movie="movie"
+        <div v-loading="store.loading" class="movie-grid" :class="{ 'is-empty': !store.loading && !store.movies.length }">
+          <template v-if="!store.loading && !store.movies.length && !store.error">
+            <div class="empty-state">
+              <el-icon :size="48"><Search /></el-icon>
+              <p>没有找到匹配的电影</p>
+            </div>
+          </template>
+          <MovieCard
+            v-for="movie in store.movies"
+            :key="movie.id"
+            :movie="movie"
+          />
+        </div>
+
+        <Pagination
+          :current="store.page"
+          :total="store.total"
+          :page-size="store.pageSize"
+          @change="handlePageChange"
+          @size-change="handleSizeChange"
         />
-      </div>
-
-      <Pagination
-        :current="store.page"
-        :total="store.total"
-        :page-size="store.pageSize"
-        @change="handlePageChange"
-        @size-change="handleSizeChange"
-      />
-    </template>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -167,16 +171,16 @@ import type { PlaylistBrief } from '@/types/movie'
 import MovieCard from '@/components/common/MovieCard.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ErrorAlert from '@/components/common/ErrorAlert.vue'
-import { Search, Refresh } from '@element-plus/icons-vue'
+import { Search, Refresh, StarFilled, VideoCamera } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useMovieStore()
 store.pageSize = 15
 
-// ── 轮播 ──
+// ── 片单轮播 ──
 const playlists = ref<PlaylistBrief[]>([])
 
-// ── 搜索 tab 状态 ──
+// ── 搜索 ──
 const keyword = ref("")
 const selectedType = ref<number | undefined>(undefined)
 const selectedRegion = ref<string | undefined>(undefined)
@@ -185,13 +189,12 @@ const selectedYearInput = ref('')
 const selectedRating = ref<string | undefined>(undefined)
 const filterPacket = ref<FilterPacket | null>(null)
 
-// ── 推荐 tab 状态 ──
-const activeTab = ref('recommend')
+// ── 猜你喜欢 ──
 const recommendItems = ref<RecommendItem[]>([])
 const recommendLoading = ref(false)
 const recommendError = ref('')
 
-// ── 推荐 ──
+// ── 片单 ──
 async function loadPlaylists(): Promise<void> {
   try {
     const res = await userApi.playlists()
@@ -201,6 +204,7 @@ async function loadPlaylists(): Promise<void> {
   }
 }
 
+// ── 猜你喜欢 ──
 async function fetchRecommend(): Promise<void> {
   recommendLoading.value = true
   recommendError.value = ''
@@ -209,32 +213,13 @@ async function fetchRecommend(): Promise<void> {
     recommendItems.value = res.data.items
   } catch {
     recommendItems.value = []
-    recommendError.value = '加载推荐失败，请稍后重试'
+    recommendError.value = '加载推荐失败'
   } finally {
     recommendLoading.value = false
   }
 }
 
-// ── 搜索 ──
-onMounted(async () => {
-  // 片单轮播
-  loadPlaylists()
-  // 推荐 Tab 初始加载
-  if (activeTab.value === 'recommend') {
-    fetchRecommend()
-  }
-  // 搜索 Tab 数据
-  try {
-    const res = await userApi.filterPacket()
-    filterPacket.value = res.data
-    const allIntervals = (res.data.intervals ?? []).map((iv) => iv.interval_id)
-    store.setIntervalIds(allIntervals)
-  } catch {
-    filterPacket.value = null
-  }
-  await store.fetchList()
-})
-
+// ── 搜索筛选 ──
 function handleFilterChange(): void {
   let intervals = (filterPacket.value?.intervals ?? []).map((iv) => iv.interval_id)
   if (selectedRating.value) {
@@ -257,6 +242,7 @@ function handleYearChange(): void {
 
 function handlePageChange(p: number): void {
   store.fetchList(p)
+  loadPlaylists()
 }
 
 function handleSizeChange(s: number): void {
@@ -264,27 +250,140 @@ function handleSizeChange(s: number): void {
   store.fetchList(1)
 }
 
-function handleTabChange(name: string | number): void {
-  if (name === 'recommend' && !recommendItems.value.length) {
-    fetchRecommend()
+onMounted(async () => {
+  loadPlaylists()
+  fetchRecommend()
+  try {
+    const res = await userApi.filterPacket()
+    filterPacket.value = res.data
+    const allIntervals = (res.data.intervals ?? []).map((iv) => iv.interval_id)
+    store.setIntervalIds(allIntervals)
+  } catch {
+    filterPacket.value = null
   }
-}
+  await store.fetchList()
+})
 </script>
 
 <style scoped>
 .home-page {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 32px 24px;
+  min-height: 100vh;
+  background: #f5f7fa;
 }
 
-.home-tabs {
-  margin-bottom: 24px;
+/* ═══ 左侧固定：猜你喜欢 ═══ */
+.recommend-sidebar {
+  width: 280px;
+  background: #fff;
+  border-right: 1px solid #e4e7ed;
+  padding: 24px 16px;
+  position: fixed;
+  top: 60px;
+  left: 0;
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  z-index: 10;
 }
 
-/* ── 推荐 ── */
+.recommend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.section-title {
+  font-size: 17px;
+  color: #1a1a2e;
+  margin: 0;
+}
+
+.recommend-list {
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.recommend-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.recommend-item:last-child {
+  margin-bottom: 0;
+}
+
+.recommend-item:hover {
+  background: #f5f7fa;
+}
+
+.recommend-poster {
+  width: 56px;
+  height: 75px;
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc;
+}
+
+.recommend-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recommend-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.recommend-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recommend-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #909399;
+}
+
+.recommend-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: #e8a838;
+  font-weight: 500;
+}
+
+/* ═══ 右侧主内容区 ═══ */
+.main-content {
+  margin-left: 280px;
+  min-width: 0;
+  padding: 24px;
+  max-width: 1600px;
+}
+
+/* ═══ 片单轮播 ═══ */
 .playlist-carousel {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   border-radius: 12px;
   overflow: hidden;
 }
@@ -321,48 +420,20 @@ function handleTabChange(name: string | number): void {
 }
 
 .playlist-carousel-placeholder {
-  background: #f5f7fa;
+  background: #fff;
   border-radius: 12px;
   padding: 32px;
-  margin-bottom: 8px;
+  margin-bottom: 20px;
 }
 
-.recommend-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.section-title {
-  font-size: 20px;
-  color: #1a1a2e;
-  margin: 0;
-}
-
-/* ── 搜索 ── */
-.home-hero {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.home-title {
-  font-size: 28px;
-  color: #1a1a2e;
-  margin: 0 0 8px;
-}
-
-.home-subtitle {
-  font-size: 15px;
-  color: #888;
-  margin: 0;
-}
-
+/* ═══ 搜索栏 ═══ */
 .home-filters {
   display: flex;
   gap: 12px;
-  margin-bottom: 12px;
-  justify-content: center;
+  margin-bottom: 20px;
+  background: #fff;
+  padding: 16px;
+  border-radius: 12px;
 }
 
 .search-input {
@@ -374,13 +445,19 @@ function handleTabChange(name: string | number): void {
   width: 130px;
 }
 
+/* ═══ 影片列表 ═══ */
+.movie-section {
+  min-width: 0;
+}
+
 .movie-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 20px;
   min-height: 300px;
-  max-width: 1100px;
-  margin: 0 auto;
+  background: #fff;
+  padding: 20px;
+  border-radius: 12px;
 }
 
 .movie-grid.is-empty {
@@ -398,9 +475,5 @@ function handleTabChange(name: string | number): void {
 .empty-state p {
   margin-top: 12px;
   font-size: 14px;
-}
-
-.mb-4 {
-  margin-bottom: 16px;
 }
 </style>

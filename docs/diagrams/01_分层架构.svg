@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780" font-family="'Microsoft YaHei','SimHei',sans-serif">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <linearGradient id="gPresentation" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#667eea"/><stop offset="100%" stop-color="#764ba2"/>
+    </linearGradient>
+    <linearGradient id="gMiddleware" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f093fb"/><stop offset="100%" stop-color="#f5576c"/>
+    </linearGradient>
+    <linearGradient id="gService" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4facfe"/><stop offset="100%" stop-color="#00f2fe"/>
+    </linearGradient>
+    <linearGradient id="gData" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#43e97b"/><stop offset="100%" stop-color="#38f9d7"/>
+    </linearGradient>
+    <linearGradient id="gCrawler" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fa709a"/><stop offset="100%" stop-color="#fee140"/>
+    </linearGradient>
+    <linearGradient id="gConfig" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a8edea"/><stop offset="100%" stop-color="#fed6e3"/>
+    </linearGradient>
+    <linearGradient id="gBackground" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff9a9e"/><stop offset="100%" stop-color="#fecfef"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="960" height="780" fill="#f8f9fc" rx="8"/>
+
+  <!-- 标题 -->
+  <text x="480" y="36" text-anchor="middle" font-size="20" font-weight="bold" fill="#2c3e50">QuartEdition 系统分层架构全景图</text>
+
+  <!-- ====== 表现层 ====== -->
+  <rect x="20" y="56" width="920" height="128" rx="8" fill="url(#gPresentation)" filter="url(#shadow)" opacity="0.92"/>
+  <text x="36" y="82" font-size="16" font-weight="bold" fill="#fff">表现层 (Presentation)</text>
+  <text x="36" y="104" font-size="12" fill="rgba(255,255,255,0.9)">routes/ — 19 个路由文件 · 3 张蓝图 · 1 个 WebSocket 路由</text>
+
+  <rect x="36" y="112" width="280" height="56" rx="6" fill="rgba(255,255,255,0.18)"/>
+  <text x="48" y="132" font-size="12" font-weight="bold" fill="#fff">public/auth_routes.py</text>
+  <text x="48" y="150" font-size="11" fill="rgba(255,255,255,0.85)">登录 · 注册 · 获取当前用户</text>
+
+  <rect x="332" y="112" width="280" height="56" rx="6" fill="rgba(255,255,255,0.18)"/>
+  <text x="344" y="132" font-size="12" font-weight="bold" fill="#fff">user/ (7 路由文件)</text>
+  <text x="344" y="150" font-size="11" fill="rgba(255,255,255,0.85)">电影浏览 · 评论 · 词云 · 个人中心</text>
+
+  <rect x="628" y="112" width="296" height="56" rx="6" fill="rgba(255,255,255,0.18)"/>
+  <text x="640" y="132" font-size="12" font-weight="bold" fill="#fff">admin/ (13 路由文件)</text>
+  <text x="640" y="150" font-size="11" fill="rgba(255,255,255,0.85)">任务管理 · 电影CRUD · 系统监控</text>
+
+  <!-- 箭头 表现→中间件 -->
+  <line x1="480" y1="184" x2="300" y2="210" stroke="#999" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="394" y="202" font-size="10" fill="#666">JWT / 权限校验</text>
+  <line x1="480" y1="184" x2="660" y2="210" stroke="#999" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="566" y="202" font-size="10" fill="#999">WS 推送</text>
+
+  <!-- ====== 工具/中间件层 ====== -->
+  <rect x="240" y="214" width="240" height="104" rx="8" fill="url(#gMiddleware)" filter="url(#shadow)" opacity="0.9"/>
+  <text x="256" y="238" font-size="14" font-weight="bold" fill="#fff">工具 / 中间件层</text>
+  <text x="256" y="256" font-size="10" fill="rgba(255,255,255,0.9)">utils/ — 11 文件</text>
+  <text x="256" y="272" font-size="10" fill="rgba(255,255,255,0.8)">JWT 鉴权 · 权限拦截</text>
+  <text x="256" y="288" font-size="10" fill="rgba(255,255,255,0.8)">滑动窗口限流 · 统一异常体系</text>
+  <text x="256" y="304" font-size="10" fill="rgba(255,255,255,0.8)">Snowflake ID · TOS 对象存储 · AI 客户端</text>
+
+  <!-- ====== 后台调度层 ====== -->
+  <rect x="560" y="214" width="380" height="104" rx="8" fill="url(#gBackground)" filter="url(#shadow)" opacity="0.9"/>
+  <text x="576" y="238" font-size="14" font-weight="bold" fill="#c0392b">后台调度层</text>
+  <text x="576" y="256" font-size="10" fill="rgba(180,0,0,0.85)">background/ — 3 个 asyncio 协程</text>
+
+  <rect x="580" y="268" width="108" height="36" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <text x="634" y="292" text-anchor="middle" font-size="11" fill="#c0392b">Puller</text>
+
+  <rect x="696" y="268" width="110" height="36" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <text x="751" y="292" text-anchor="middle" font-size="11" fill="#c0392b">BrowserPool</text>
+
+  <rect x="814" y="268" width="110" height="36" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <text x="869" y="292" text-anchor="middle" font-size="11" fill="#c0392b">Monitor</text>
+
+  <!-- 箭头 工具/调度 → 业务 -->
+  <line x1="360" y1="318" x2="480" y2="342" stroke="#999" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="750" y1="318" x2="480" y2="342" stroke="#999" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+  <!-- ====== 业务服务层 ====== -->
+  <rect x="20" y="346" width="920" height="78" rx="8" fill="url(#gService)" filter="url(#shadow)" opacity="0.9"/>
+  <text x="36" y="370" font-size="15" font-weight="bold" fill="#1a5c8a">业务服务层 (Services)</text>
+  <text x="36" y="390" font-size="11" fill="rgba(0,0,0,0.55)">services/ — 12 个 Service · 依赖注入 · 纯业务逻辑</text>
+  <text x="36" y="408" font-size="10" fill="rgba(0,0,0,0.45)">AuthService · MovieService · ReviewService · TaskHistoryService · TaskFailureService · PlaylistService · UserActionService · RecommendService · StyleTagService · MovieContext · PlaylistService</text>
+
+  <!-- 箭头 业务 → 数据 -->
+  <line x1="480" y1="424" x2="480" y2="452" stroke="#999" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+  <text x="496" y="442" font-size="10" fill="#666">所有 Service 通过 DatabaseLayerV2 操作数据</text>
+
+  <!-- ====== 数据访问层 ====== -->
+  <rect x="20" y="456" width="920" height="110" rx="8" fill="url(#gData)" filter="url(#shadow)" opacity="0.88"/>
+  <text x="36" y="480" font-size="15" font-weight="bold" fill="#0b5e3c">数据访问层 (Data Access)</text>
+  <text x="36" y="499" font-size="11" fill="rgba(0,0,0,0.5)">db/ — 7 文件 · DatabaseLayerV2 统一入口 (ContextVar 隔离 · 手动事务 · 三 DB 透明切换)</text>
+
+  <rect x="36" y="510" width="268" height="42" rx="6" fill="rgba(255,255,255,0.30)"/>
+  <text x="170" y="529" text-anchor="middle" font-size="12" font-weight="bold" fill="#0b5e3c">MySQL · aiomysql 连接池</text>
+  <text x="170" y="544" text-anchor="middle" font-size="10" fill="#0b5e3c">21 张表 · 参数化防注入</text>
+
+  <rect x="322" y="510" width="268" height="42" rx="6" fill="rgba(255,255,255,0.30)"/>
+  <text x="456" y="529" text-anchor="middle" font-size="12" font-weight="bold" fill="#0b5e3c">MongoDB · motor 异步驱动</text>
+  <text x="456" y="544" text-anchor="middle" font-size="10" fill="#0b5e3c">2 集合 · NoSQL 注入防护</text>
+
+  <rect x="608" y="510" width="316" height="42" rx="6" fill="rgba(255,255,255,0.30)"/>
+  <text x="766" y="529" text-anchor="middle" font-size="12" font-weight="bold" fill="#0b5e3c">Redis · ZSET 延迟队列 + Lua 原子</text>
+  <text x="766" y="544" text-anchor="middle" font-size="10" fill="#0b5e3c">任务队列 · 限流 · 去重 · 词云缓存</text>
+
+  <!-- 箭头 数据 → 爬虫 -->
+  <line x1="160" y1="566" x2="160" y2="594" stroke="#999" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="176" y="584" font-size="10" fill="#666">crawler/storage.py 写入</text>
+
+  <!-- ====== 爬虫引擎层 ====== -->
+  <rect x="20" y="598" width="450" height="104" rx="8" fill="url(#gCrawler)" filter="url(#shadow)" opacity="0.88"/>
+  <text x="36" y="622" font-size="14" font-weight="bold" fill="#8b0000">爬虫引擎层 (Crawler Engine)</text>
+  <text x="36" y="641" font-size="10" fill="rgba(0,0,0,0.55)">crawler/ — 8 文件 · 单垂直引擎</text>
+  <text x="36" y="658" font-size="10" fill="rgba(0,0,0,0.5)">CrawlerEngine → Fetcher (双引擎) → Parser (纯函数) → Storage (多表)</text>
+  <text x="36" y="674" font-size="10" fill="rgba(0,0,0,0.45)">ProxyPool · CookieManager · IdentityManager · WorkerEvent</text>
+  <text x="36" y="690" font-size="10" fill="rgba(0,0,0,0.45)">8 种任务: movie_crawl / detail / review / comment / director / ai_summary / ai_wordcloud</text>
+
+  <!-- ====== 配置层 ====== -->
+  <rect x="510" y="598" width="430" height="104" rx="8" fill="url(#gConfig)" filter="url(#shadow)" opacity="0.88"/>
+  <text x="526" y="622" font-size="14" font-weight="bold" fill="#2c3e50">配置层 (Configuration)</text>
+  <text x="526" y="641" font-size="10" fill="rgba(0,0,0,0.55)">config/ — 7 文件 · 全部 pydantic-settings</text>
+  <text x="526" y="660" font-size="10" fill="rgba(0,0,0,0.5)">settings.py (JWT/BCRYPT/DB/TOS/DEEPSEEK)</text>
+  <text x="526" y="676" font-size="10" fill="rgba(0,0,0,0.5)">db_config · crawler_config · puller_config</text>
+  <text x="526" y="692" font-size="10" fill="rgba(0,0,0,0.5)">monitor_config · movie_type · openapi</text>
+
+  <!-- 底部说明 -->
+  <text x="480" y="738" text-anchor="middle" font-size="10" fill="#aaa">▲ 所有层的依赖方向严格自顶向下 · 无循环依赖 · 配置层被所有层读取（只读）</text>
+  <line x1="200" y1="746" x2="760" y2="746" stroke="#ddd" stroke-width="1"/>
+
+  <!-- 右侧纵向标注 -->
+  <text x="940" y="580" font-size="9" fill="#aaa" writing-mode="tb" glyph-orientation-vertical="0">被所有层读取</text>
+  <line x1="948" y1="200" x2="948" y2="690" stroke="#ddd" stroke-width="1"/>
+</svg>

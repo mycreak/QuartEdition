@@ -197,3 +197,37 @@ async def update_me():
             "permissions": permissions,
         },
     })
+
+
+@auth_bp.route("/me/password", methods=["PATCH"])
+@tag(["认证"])
+async def change_password():
+    """
+    登录用户修改自己的密码。
+
+    请求体：{ "old_password": "原密码", "new_password": "新密码" }
+    校验：新密码 ≥6 位，含大写字母、小写字母、数字（Pydantic 自动）
+    成功返回 → 前端清除 JWT 重新登录（密码变更后旧 token 仍有效，安全策略要求重新认证）
+    """
+    from models.user import PasswordChange
+
+    user_id = await get_current_user()
+    if not user_id:
+        return jsonify({"error": "未登录或登录已过期", "code": "UNAUTHORIZED"}), 401
+
+    try:
+        body = await request.get_json()
+        data = PasswordChange(**body)
+    except Exception as e:
+        return jsonify({"error": f"请求格式错误: {e}"}), 400
+
+    svc = _get_auth_service()
+    try:
+        await svc.change_password(user_id, data.old_password, data.new_password)
+    except ServiceError as e:
+        return _as_error(e)
+
+    return jsonify({
+        "success": True,
+        "message": "密码修改成功，请重新登录",
+    })

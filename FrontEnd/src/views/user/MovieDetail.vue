@@ -12,6 +12,12 @@
         返回推荐页
       </el-button>
     </div>
+    <!-- 从个人中心进入时显示返回按钮 -->
+    <div v-else-if="fromProfile" class="back-bar">
+      <el-button :icon="ArrowLeft" @click="router.push('/profile')" text>
+        返回个人中心
+      </el-button>
+    </div>
     <ErrorAlert :message="error" @close="error = ''" />
 
     <template v-if="detail">
@@ -379,6 +385,9 @@ const playlistId = computed(() => route.query.listId as string)
 
 // 判断是否从管理端进入
 const fromAdmin = computed(() => route.query.from === 'admin')
+
+// 判断是否从个人中心进入
+const fromProfile = computed(() => route.query.from === 'profile')
 
 // 返回片单详情页
 function goBackToPlaylist() {

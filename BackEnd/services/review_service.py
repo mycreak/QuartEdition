@@ -44,6 +44,7 @@ _MONGO_PROJECTION_COMMENTS = {
     "movie_id": 1,             "movie_douban_id": 1,
     "author": 1, "rating": 1, "text": 1, "date": 1,
     "useful_count": 1, "is_published": 1, "crawled_at": 1,
+    "removed_by": 1,
 }
 
 
@@ -380,19 +381,41 @@ class ReviewService:
         """
         内部复用：上下架单条评论。
 
+        上架时：拒绝 removed_by='user' 的评论（用户主动删除不可逆转）
+        下架时：写入 removed_by='admin'（与管理端"用户已删除"区分）
+
         输入：collection_name, doc_id (MongoDB _id), published
         输出：True
         异常：ResourceNotFoundError — 评论不存在或未变更
+              ServiceError(403)    — 用户已删除的评论不可上架
         """
         from utils.errors import ResourceNotFoundError
+        from utils.errors import ServiceError
 
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
         try:
+            if published:
+                doc = await self.db.find_one(
+                    table=collection_name,
+                    conditions={"_id": doc_id},
+                )
+                if doc and doc.get("removed_by") == "user":
+                    label = "长评" if collection_name == "reviews" else "短评"
+                    raise ServiceError(
+                        f"该{label}已被用户主动删除，无法上架",
+                        status_code=403,
+                        code="USER_DELETED",
+                    )
+
+            data: dict = {"is_published": published}
+            if not published:
+                data["removed_by"] = "admin"
+
             modified = await self.db.update(
                 table=collection_name,
                 conditions={"_id": doc_id},
-                data={"is_published": published},
+                data=data,
             )
             if modified == 0:
                 label = "长评" if collection_name == "reviews" else "短评"

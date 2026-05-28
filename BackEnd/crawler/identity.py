@@ -130,6 +130,27 @@ class IdentityManager:
         """从 ProxyPool 中按 key 查找代理。"""
         return self._proxy_pool.get_by_key(proxy_key)
 
+    async def check_binding(self, admin_id: int, cookie_id: str) -> None:
+        """
+        校验管理员是否被允许使用该 Cookie。
+
+        输入：admin_id, cookie_id（空 cookie_id = 游客模式，跳过校验）
+        异常：ValueError — cookie_id 未绑定该管理员
+        规则：bound_admin_ids 为空 → 所有管理员可用（向后兼容）
+              bound_admin_ids 非空 → 仅列表中的管理员可用
+        """
+        if not cookie_id:
+            return
+        account = self._cookie_manager.get(cookie_id)
+        if account is None:
+            raise ValueError(f"Cookie 账号不存在: {cookie_id}")
+        bound = account.bound_admin_ids
+        if bound and admin_id not in bound:
+            raise ValueError(
+                f"你没有权限使用 Cookie 账号 '{cookie_id}'"
+                f"（已绑定管理员: {bound}）"
+            )
+
     def list_available(self) -> dict:
         """
         供管理 API — 返回当前所有可用身份组合的摘要。

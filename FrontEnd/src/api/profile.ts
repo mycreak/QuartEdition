@@ -56,8 +56,24 @@ export const uploadListCover = (file: File) => {
   })
 }
 
+/**
+ * 修改当前用户密码
+ * @param oldPassword - 原密码
+ * @param newPassword - 新密码（≥6位+大小写字母+数字）
+ */
+export const changePassword = (oldPassword: string, newPassword: string) => {
+  return client.patch<{
+    success: boolean
+    message: string
+  }>('/auth/me/password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  })
+}
+
 export default {
   updateProfile,
   uploadAvatar,
-  uploadListCover
+  uploadListCover,
+  changePassword
 }

@@ -106,14 +106,18 @@
               </el-button>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
-              <el-tag :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
+              <el-tag v-if="row.removed_by === 'user'" type="danger" size="small">用户已删除</el-tag>
+              <el-tag v-else :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleCommentPublish(row)">
+              <el-tooltip v-if="row.removed_by === 'user'" content="该评论已被用户主动删除，无法重新上架" placement="top">
+                <el-button size="small" type="success" link disabled>上架</el-button>
+              </el-tooltip>
+              <el-button v-else-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleCommentPublish(row)">
                 {{ row.is_published ? '下架' : '上架' }}
               </el-button>
             </template>
@@ -309,8 +313,11 @@ async function toggleCommentPublish(row: AdminComment) {
     const api = row.is_published ? adminReviewsApi.unpublishComment : adminReviewsApi.publishComment
     await api(row.comment_id)
     row.is_published = !row.is_published
+    row.removed_by = row.is_published ? null : 'admin'
     ElMessage.success(row.is_published ? '已上架' : '已下架')
-  } catch { ElMessage.error('操作失败') }
+  } catch (err: any) {
+    ElMessage.error(err.response?.data?.error || '操作失败')
+  }
 }
 
 function formatContent(content: string | undefined): string {

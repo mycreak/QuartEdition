@@ -20,6 +20,7 @@ export interface AdminComment {
   text: string
   rating?: number
   is_published: boolean
+  removed_by?: string | null
   created_at: string
 }
 

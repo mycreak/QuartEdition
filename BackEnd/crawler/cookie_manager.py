@@ -61,6 +61,7 @@ class Account:
     单个豆瓣账号。
 
     v2 — 新增 remark/platform/enabled/usage_count，供管理端展示和过滤。
+    v3 — 新增 bound_admin_ids，用于身份绑定（限制哪些管理员可使用此 Cookie）。
     """
     id: str
     label: str = ""
@@ -76,6 +77,7 @@ class Account:
     platform: str = "douban"
     enabled: bool = True
     usage_count: int = 0
+    bound_admin_ids: List[int] = field(default_factory=list)
 
     @property
     def storage_state(self) -> dict:
@@ -153,6 +155,7 @@ class CookieManager:
                 platform=item.get("platform", "douban"),
                 enabled=item.get("enabled", True),
                 usage_count=item.get("usage_count", 0),
+                bound_admin_ids=item.get("bound_admin_ids", []),
             )
             if acc.id:
                 self._accounts[acc.id] = acc
@@ -213,8 +216,9 @@ class CookieManager:
                     "remark": a.remark,
                     "platform": a.platform,
                     "enabled": a.enabled,
-                    "usage_count": a.usage_count,
-                }
+                "usage_count": a.usage_count,
+                "bound_admin_ids": a.bound_admin_ids,
+            }
                 for a in self._accounts.values()
             ],
         }
@@ -307,6 +311,7 @@ class CookieManager:
                 "platform": a.platform,
                 "enabled": a.enabled,
                 "allowed_regions": a.allowed_regions,
+                "bound_admin_ids": a.bound_admin_ids,
                 "dbcl2_preview": a.dbcl2_preview,
                 "saved_at": a.saved_at,
                 "state": a.state,
@@ -433,13 +438,13 @@ class CookieManager:
         按 ID 更新账号属性。
 
         输入：account_id + 任意关键字参数
-             可更新字段: label, remark, platform, enabled, allowed_regions
+             可更新字段: label, remark, platform, enabled, allowed_regions, bound_admin_ids
         输出：True=成功, False=不存在
         """
         acc = self._accounts.get(account_id)
         if acc is None:
             return False
-        updatable = {"label", "remark", "platform", "enabled", "allowed_regions"}
+        updatable = {"label", "remark", "platform", "enabled", "allowed_regions", "bound_admin_ids"}
         for field, value in kwargs.items():
             if field in updatable:
                 setattr(acc, field, value)
@@ -449,10 +454,13 @@ class CookieManager:
 
     async def verify_account(self, account_id: str) -> dict:
         """
-        验证 Cookie 账号是否仍有效（通过访问豆瓣检测是否被重定向到登录页）。
+        验证 Cookie 账号是否仍有效（aiohttp 直连，⚠️ IP 封禁时误判）。
 
         输入：account_id
         输出：{"success": bool, "message": str, "error_type": str, "cookies_count": int}
+
+        ⚠️ 已弃用 — 多数情况下服务器 IP 已被豆瓣封禁导致 aiohttp 直连必失败，
+                 请使用 verify_account_v2()（Playwright + 代理 + IP 后验）。
         """
         acc = self._accounts.get(account_id)
         if acc is None:
@@ -520,6 +528,169 @@ class CookieManager:
                 "error_type": type(e).__name__,
                 "cookies_count": len(cookies_list),
             }
+
+    async def verify_account_v2(
+        self,
+        account_id: str,
+        browser,
+        proxy_host: str = "",
+        proxy_port: int = 0,
+        proxy_username: str = "",
+        proxy_password: str = "",
+    ) -> dict:
+        """
+        验证 Cookie 账号是否有效（Playwright 真浏览器 + 代理 + IP 后验）。
+
+        策略：
+            1. Playwright + Cookie + 代理 → movie.douban.com
+            2. 200 + 豆瓣标题 → Cookie 有效，IP 正常 → report_success
+            3. 重定向到登录页 → Cookie 过期，IP 正常 → report_success
+            4. 超时/403/网络错误 → 转入 IP 验证
+               a. IP 验证通过 → "IP 正常，Cookie 无法确认"
+               b. IP 验证失败 → report_failure → "IP 不可用"
+            5. 无可用代理 → "no_available_proxy"
+
+        输入：
+            account_id:      Cookie 账号 ID
+            browser:         Playwright Chromium 浏览器实例
+            proxy_host:      代理 IP（空=自动选择）
+            proxy_port:      代理端口
+            proxy_username:  代理认证用户名（可选）
+            proxy_password:  代理认证密码（可选）
+        输出：
+            {"success": bool, "verdict": str, "message": str, "cookies_count": int}
+            verdict: "ok" | "cookie_expired" | "ip_blocked" | "ip_pass_cookie_unknown" | "no_available_proxy"
+        """
+        acc = self._accounts.get(account_id)
+        if acc is None:
+            return {
+                "success": False,
+                "verdict": "not_found",
+                "message": "账号不存在",
+                "cookies_count": 0,
+            }
+
+        storage = acc.storage_state
+        cookies_list = storage.get("cookies", [])
+        cookies_count = len(cookies_list)
+
+        import time as _time_v2
+
+        # 构造代理配置
+        proxy_config = {}
+        proxy_key_str = ""
+        if proxy_host and proxy_port:
+            proxy_key_str = f"{proxy_host}:{proxy_port}"
+            proxy_config["server"] = f"http://{proxy_host}:{proxy_port}"
+            if proxy_username:
+                proxy_config["username"] = proxy_username
+            if proxy_password:
+                proxy_config["password"] = proxy_password
+
+        proxy_pool = None
+        from crawler.proxy import get_proxy_pool as _get_pp
+        try:
+            proxy_pool = _get_pp()
+        except RuntimeError:
+            pass
+
+        context = None
+        try:
+            context_kwargs = {"storage_state": storage}
+            if proxy_config:
+                context_kwargs["proxy"] = proxy_config
+            context = await browser.new_context(**context_kwargs)
+            page = await context.new_page()
+            start = _time_v2.time()
+
+            await page.goto(
+                "https://movie.douban.com/",
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
+            elapsed = int((_time_v2.time() - start) * 1000)
+
+            # 检查是否被重定向
+            current_url = page.url
+            if "login" in current_url.lower():
+                # IP 正常，Cookie 过期
+                if proxy_pool and proxy_key_str:
+                    await proxy_pool._report_ip_ok(proxy_key_str)
+                return {
+                    "success": False,
+                    "verdict": "cookie_expired",
+                    "message": "Cookie 已过期，被重定向到登录页",
+                    "latency_ms": elapsed,
+                    "cookies_count": cookies_count,
+                }
+
+            title = await page.title()
+            if "豆瓣" in title:
+                # Cookie 有效，IP 正常
+                if proxy_pool and proxy_key_str:
+                    await proxy_pool._report_ip_ok(proxy_key_str)
+                return {
+                    "success": True,
+                    "verdict": "ok",
+                    "message": f"Cookie 有效，账号正常 (延迟 {elapsed}ms)",
+                    "latency_ms": elapsed,
+                    "cookies_count": cookies_count,
+                }
+
+            # 意外页面 — 可能验证码
+            return {
+                "success": False,
+                "verdict": "ip_pass_cookie_unknown",
+                "message": f"页面未重定向到登录页但标题不含豆瓣: {title[:60]}",
+                "latency_ms": elapsed,
+                "cookies_count": cookies_count,
+            }
+
+        except Exception as e:
+            # 网络层失败 — 可能是 IP 问题
+            msg = str(e)[:100]
+            is_network_error = any(kw in msg.lower() for kw in (
+                "timeout", "net::err_", "connection", "reset", "refused",
+                "tunnel", "proxy", "socket",
+            ))
+
+            if is_network_error and proxy_pool and proxy_key_str:
+                # 转 IP 验证
+                ip_ok, ip_msg = await proxy_pool.verify_proxy_browser(
+                    proxy_host, proxy_port,
+                    browser=browser,
+                    username=proxy_username,
+                    password=proxy_password,
+                    timeout=15,
+                )
+                if not ip_ok:
+                    await proxy_pool._report_ip_fail(proxy_key_str)
+                    return {
+                        "success": False,
+                        "verdict": "ip_blocked",
+                        "message": f"IP 确认不可用: {ip_msg}",
+                        "cookies_count": cookies_count,
+                    }
+                # IP 正常但 Cookie 无法确认
+                return {
+                    "success": False,
+                    "verdict": "ip_pass_cookie_unknown",
+                    "message": f"IP 正常 ({ip_msg})，但 Cookie 访问失败: {msg}",
+                    "cookies_count": cookies_count,
+                }
+
+            return {
+                "success": False,
+                "verdict": "ip_pass_cookie_unknown",
+                "message": f"验证异常: {msg}",
+                "cookies_count": cookies_count,
+            }
+        finally:
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
     async def set_account_state(self, account_id: str, state: str) -> bool:
         """

@@ -210,6 +210,16 @@
               <span v-if="!row.allowed_regions?.length" class="c-gray">不限</span>
             </template>
           </el-table-column>
+          <el-table-column label="绑定管理员" width="130">
+            <template #default="{ row }">
+              <template v-if="row.bound_admin_ids?.length">
+                <el-tag v-for="id in row.bound_admin_ids" :key="id" size="small" type="warning" class="region-tag">
+                  {{ getAdminName(id) }}
+                </el-tag>
+              </template>
+              <span v-else class="c-gray">所有人</span>
+            </template>
+          </el-table-column>
           <el-table-column label="使用统计" width="160">
             <template #default="{ row }">
               <el-tooltip content="该 Cookie 累计成功使用的次数。每次成功请求后 +1，同时连续失败计数归零。" placement="top">
@@ -324,6 +334,23 @@
           </el-select>
           <div class="form-hint">该Cookie仅允许用于这些地区的代理</div>
         </el-form-item>
+        <el-form-item label="绑定管理员">
+          <el-select
+            v-model="cookieEditForm.bound_admin_ids"
+            multiple
+            filterable
+            placeholder="选择允许使用此Cookie的管理员（空=所有管理员可用）"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="admin in adminList"
+              :key="admin.id"
+              :label="`${admin.display_name} (${admin.username})`"
+              :value="admin.id"
+            />
+          </el-select>
+          <div class="form-hint">空 = 所有管理员均可使用；选中后仅指定管理员可用</div>
+        </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="cookieEditForm.enabled" active-text="启用" inactive-text="禁用" />
         </el-form-item>
@@ -433,10 +460,24 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminProxyApi, adminCookieApi, type ProxyItem, type CookieAccount, type CookieStats } from '@/api/admin/infra'
+import { adminUsersApi } from '@/api/admin/users'
 import { useAuthStore } from '@/stores/auth'
 import { formatDate } from '@/utils/format'
 
 const authStore = useAuthStore()
+const adminList = ref<{ id: number; username: string; display_name: string }[]>([])
+
+async function fetchAdminList() {
+  try {
+    const res = await adminUsersApi.list()
+    adminList.value = res.data.items || []
+  } catch { /* ignore */ }
+}
+
+function getAdminName(id: number): string {
+  const admin = adminList.value.find(a => a.id === id)
+  return admin ? admin.username : `#${id}`
+}
 // 权限判断（system:monitor → infra:* 兼容逻辑已内置于 hasPermission()）
 const canViewProxy = computed(() => authStore.checkPermission('infra:proxy:read'))
 const canManageProxy = computed(() => authStore.checkPermission('infra:proxy:manage'))
@@ -619,7 +660,8 @@ const cookieEditForm = reactive({
   remark: '',
   platform: 'douban',
   enabled: true,
-  allowed_regions: [] as string[]
+  allowed_regions: [] as string[],
+  bound_admin_ids: [] as number[],
 })
 
 function stateType(state: string): string {
@@ -769,6 +811,7 @@ function openEditCookie(row: CookieAccount) {
   cookieEditForm.platform = row.platform
   cookieEditForm.enabled = row.enabled
   cookieEditForm.allowed_regions = [...row.allowed_regions]
+  cookieEditForm.bound_admin_ids = [...(row.bound_admin_ids || [])]
   cookieEditVisible.value = true
 }
 
@@ -782,6 +825,7 @@ async function submitEditCookie() {
     updateData.platform = cookieEditForm.platform
     updateData.enabled = cookieEditForm.enabled
     updateData.allowed_regions = cookieEditForm.allowed_regions
+    updateData.bound_admin_ids = cookieEditForm.bound_admin_ids
 
     await adminCookieApi.update(cookieEditForm.id, updateData)
     ElMessage.success('Cookie信息已更新')
@@ -809,7 +853,7 @@ async function submitReplaceCookie() {
 
 
 
-onMounted(() => { fetchProxies(); fetchCookieAccounts() })
+onMounted(() => { fetchProxies(); fetchCookieAccounts(); fetchAdminList() })
 </script>
 
 <style scoped>

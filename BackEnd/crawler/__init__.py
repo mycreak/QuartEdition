@@ -163,6 +163,12 @@ class CrawlerEngine:
         if not task_type:
             raise ValueError("任务 JSON 缺少 type 字段")
 
+        # 身份绑定校验 — 管理员是否有权限使用该 Cookie
+        cookie_id = (data.get("cookie_id") or "").strip()
+        admin_id = data.get("admin_id")
+        if cookie_id and admin_id and self._identity_manager is not None:
+            await self._identity_manager.check_binding(admin_id, cookie_id)
+
         if task_type == "movie_crawl":
             await self._handle_movie_crawl(data)
         elif task_type == "movie_scrape_task":
@@ -466,7 +472,14 @@ class CrawlerEngine:
                 f"html[:200]={html_preview[:200]}"
             )
 
-        # ④ 更新 douban_ids（标记已认领 + 已爬取完成）
+        # ④ 自动注入 director_crawl 子任务（继承父任务 admin_id，独立 task_history）
+        #    先注入子任务，再标记 douban_ids 完成：子任务注入失败不会导致
+        #    douban_id 被错误标记为终态，管理员可重新提交。
+        await self._emit_stage(task_str, "📋 创建演职人员爬取子任务...")
+        await self._inject_director_subtask(data, movie_id)
+        await self._emit_stage(task_str, "✅ 电影基础信息入库完成，子任务已入队")
+
+        # ⑤ 更新 douban_ids（标记已认领 + 已爬取完成，终态不可逆）
         raw = self._movie_service.db.raw_mysql()
         await raw.execute_update(
             "UPDATE douban_ids SET is_acquired=1, is_scraped=1, "
@@ -474,11 +487,6 @@ class CrawlerEngine:
             "WHERE douban_id=%s",
             (task_id, douban_id),
         )
-
-        # ⑤ 自动注入 director_crawl 子任务（继承父任务 admin_id，独立 task_history）
-        await self._emit_stage(task_str, "📋 创建演职人员爬取子任务...")
-        await self._inject_director_subtask(data, movie_id)
-        await self._emit_stage(task_str, "✅ 电影基础信息入库完成，子任务已入队")
 
         if cookie_id and self._identity_manager is not None:
             try:
@@ -735,10 +743,7 @@ class CrawlerEngine:
                     )
         except Exception as e:
             logger.error(f"[长评正文爬取] review_id={review_id} API请求失败: {e}")
-            await raw.execute_update(
-                "UPDATE movie_review SET status='failed' WHERE review_id=%s",
-                (review_id,),
-            )
+            # 不修改 movie_review.status，保持 pending——管理员可直接重新提交
             raise
 
         # ② 解析内容 (parse_review_full 期望 dict，现在传入的是 API JSON)
@@ -1126,10 +1131,6 @@ class CrawlerEngine:
             )
 
             if not result:
-                await raw.execute_update(
-                    "UPDATE review_summary SET status='failed', updated_at=NOW() WHERE movie_id=%s",
-                    (movie_id,),
-                )
                 logger.error(f"[AI总结-内联] movie_id={movie_id} AI 生成失败")
                 return
 
@@ -1255,13 +1256,7 @@ class CrawlerEngine:
 
         except Exception as e:
             logger.error(f"[AI总结-内联] movie_id={movie_id} 异常: {e}", exc_info=True)
-            try:
-                await raw.execute_update(
-                    "UPDATE review_summary SET status='failed', updated_at=NOW() WHERE movie_id=%s",
-                    (movie_id,),
-                )
-            except Exception:
-                pass
+            raise
 
     async def _inject_ai_wordcloud(self, movie_id: int, parent_task_id: int = 0) -> None:
         """
@@ -1444,12 +1439,9 @@ class CrawlerEngine:
             result = await ai_client.generate_review_summary(reviews)
             
             if not result:
-                # 生成失败，标记为failed
+                # 生成失败，不修改 review_summary.status
+                # status 保持 pending——下次有新长评入库时会重新触发 AI 总结
                 sn = getattr(ai_client, 'last_snapshot', {}) or {}
-                await raw.execute_update(
-                    "UPDATE review_summary SET status='failed', updated_at=NOW() WHERE movie_id=%s",
-                    (movie_id,),
-                )
                 raise RuntimeError(
                     f"AI总结生成失败 movie_id={movie_id} "
                     f"provider={sn.get('provider', '?')} "
@@ -1586,14 +1578,7 @@ class CrawlerEngine:
             
         except Exception as e:
             logger.error(f"[AI总结] 处理失败 task_id={task_id}, movie_id={movie_id}: {e}", exc_info=True)
-            # 标记为失败状态
-            try:
-                await raw.execute_update(
-                    "UPDATE review_summary SET status='failed', updated_at=NOW() WHERE movie_id=%s",
-                    (movie_id,),
-                )
-            except Exception:
-                pass
+            # 不修改 review_summary.status——保持 pending，下次有新长评入库时会重新触发
             raise
 
     # ── AI 词云生成任务 ──

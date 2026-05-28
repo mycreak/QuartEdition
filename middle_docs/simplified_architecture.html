@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>QuartEdition 简化版系统架构图</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f9ff;
+      padding: 32px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 { text-align: center; margin-bottom: 8px; color: #0c4a6e; }
+    .subtitle { text-align: center; color: #075985; margin-bottom: 32px; font-size: 16px; }
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+    .desc {
+      background: #f0fdf4;
+      border-left: 4px solid #22c55e;
+      padding: 16px;
+      margin-bottom: 32px;
+      border-radius: 4px;
+      color: #166534;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+    .legend {
+      margin-top: 32px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+    }
+    .color-tag {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚀 QuartEdition 豆瓣电影平台 简化架构</h1>
+  <p class="subtitle">面向非技术人员的易懂版本 · 保留核心流程</p>
+
+  <div class="container">
+    <div class="desc">
+      <strong>核心逻辑：</strong>用户在浏览器操作 → 网关转发请求 → 后端处理业务 → 爬虫自动爬取豆瓣数据 → 数据存入数据库 → 结果返回给用户
+    </div>
+
+    <div class="mermaid">
+graph LR
+    A[👤 用户/管理员] -->|打开网页/操作| B[🖥️ 前端界面<br>Vue3 + Element Plus]
+    B -->|请求数据| C[🔀 网关 Nginx<br>负责转发请求]
+    
+    subgraph 后端服务 Quart
+        direction TB
+        D[⚙️ 业务功能<br>用户/电影/任务管理]
+        E[🕷️ 爬虫引擎<br>自动爬取豆瓣数据]
+        F[⏰ 后台调度<br>任务排队/监控]
+    end
+    
+    C -->|转发API请求| D
+    D -->|提交爬取任务| F
+    F -->|分配任务| E
+    
+    E -->|爬取数据| G[🌐 第三方服务<br>豆瓣/DeepSeek AI/对象存储]
+    E -->|存储结果| H[🗄️ 数据存储<br>MySQL/MongoDB/Redis]
+    D -->|读写数据| H
+    
+    H -->|返回数据| D
+    D -->|返回结果| C
+    C -->|展示给用户| B
+    B -->|看到结果| A
+
+    style A fill:#fef3c7,stroke:#f59e0b
+    style B fill:#dbeafe,stroke:#3b82f6
+    style C fill:#ddd6fe,stroke:#8b5cf6
+    style D fill:#d1fae5,stroke:#10b981
+    style E fill:#fecaca,stroke:#ef4444
+    style F fill:#fed7aa,stroke:#f97316
+    style G fill:#e0e7ff,stroke:#6366f1
+    style H fill:#ecfccb,stroke:#84cc16
+    </div>
+
+    <div class="legend">
+      <div class="legend-item" style="background: #fef3c7">
+        <span class="color-tag" style="background: #f59e0b"></span>
+        <span>用户端</span>
+      </div>
+      <div class="legend-item" style="background: #dbeafe">
+        <span class="color-tag" style="background: #3b82f6"></span>
+        <span>前端页面</span>
+      </div>
+      <div class="legend-item" style="background: #ddd6fe">
+        <span class="color-tag" style="background: #8b5cf6"></span>
+        <span>网关</span>
+      </div>
+      <div class="legend-item" style="background: #d1fae5">
+        <span class="color-tag" style="background: #10b981"></span>
+        <span>业务功能</span>
+      </div>
+      <div class="legend-item" style="background: #fecaca">
+        <span class="color-tag" style="background: #ef4444"></span>
+        <span>爬虫引擎</span>
+      </div>
+      <div class="legend-item" style="background: #fed7aa">
+        <span class="color-tag" style="background: #f97316"></span>
+        <span>后台调度</span>
+      </div>
+      <div class="legend-item" style="background: #e0e7ff">
+        <span class="color-tag" style="background: #6366f1"></span>
+        <span>外部服务</span>
+      </div>
+      <div class="legend-item" style="background: #ecfccb">
+        <span class="color-tag" style="background: #84cc16"></span>
+        <span>数据存储</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'default',
+      securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true },
+    });
+  </script>
+</body>
+</html>

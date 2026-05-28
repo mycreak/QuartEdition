@@ -180,7 +180,7 @@ async def list_comments():
     items, total = await svc.list_comments(
         movie_ids=resolved_ids,
         rating=rating,
-        published_only=bool(published) if published is not None else False,
+        published_only=bool(published) if published is not None and published != -1 else False,
         page=page,
         page_size=page_size,
     )
