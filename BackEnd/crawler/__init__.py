@@ -479,10 +479,10 @@ class CrawlerEngine:
         await self._inject_director_subtask(data, movie_id)
         await self._emit_stage(task_str, "✅ 电影基础信息入库完成，子任务已入队")
 
-        # ⑤ 更新 douban_ids（标记已认领 + 已爬取完成，终态不可逆）
+        # ⑤ 更新 douban_ids（标记已认领；is_scraped 推迟到 director_crawl 成功后标记）
         raw = self._movie_service.db.raw_mysql()
         await raw.execute_update(
-            "UPDATE douban_ids SET is_acquired=1, is_scraped=1, "
+            "UPDATE douban_ids SET is_acquired=1, "
             "acquired_at=NOW(), task_id=%s "
             "WHERE douban_id=%s",
             (task_id, douban_id),
@@ -974,6 +974,11 @@ class CrawlerEngine:
         crew = parse_personnel(html)
         if not crew:
             logger.warning(f"[director_crawl] task={task_id} 未提取到演职人员信息")
+            raw = self._movie_service.db.raw_mysql()
+            await raw.execute_update(
+                "UPDATE douban_ids SET is_scraped=1 WHERE douban_id=%s",
+                (douban_id,),
+            )
             return
 
         # 事务原子写入 people + movie_credits
@@ -982,6 +987,12 @@ class CrawlerEngine:
         logger.info(
             f"[director_crawl] task={task_id} 完成: "
             f"saved={saved}/{len(crew)} 种角色"
+        )
+
+        raw = self._movie_service.db.raw_mysql()
+        await raw.execute_update(
+            "UPDATE douban_ids SET is_scraped=1 WHERE douban_id=%s",
+            (douban_id,),
         )
 
     # ── 内部：子任务注入 ──
