@@ -101,15 +101,15 @@ CREATE TABLE IF NOT EXISTS movie_review (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── 失败任务 ──
+-- 2026-05-29: 删除 task_json / admin_id / event_type 冗余列
+--   查询时通过 LEFT JOIN task_history 获取 task_params / admin_id
 CREATE TABLE IF NOT EXISTS task_failures (
   id                INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   task_id           BIGINT        NOT NULL DEFAULT 0,
   worker_id         INT           NOT NULL DEFAULT 0,
-  task_json         JSON          NOT NULL,
-  event_type        VARCHAR(16)   NOT NULL DEFAULT 'failure' COMMENT 'failure / cancelled',
-  kind              VARCHAR(32)   NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation',
+  kind              VARCHAR(32)   NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation / browser / unknown',
+  failure_layer     VARCHAR(16)   NOT NULL DEFAULT 'crawler' COMMENT 'crawler / storage / ai / system',
   reason            VARCHAR(1024) DEFAULT NULL,
-  admin_id          INT           NOT NULL DEFAULT 0,
   status            VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT 'pending / claimed / resolved',
   claimed_by        INT           NOT NULL DEFAULT 0,
   claimed_at        DATETIME      DEFAULT NULL,

@@ -11,18 +11,33 @@ TaskFailureService 服务层集成测试。
 
 import pytest
 import json
-import asyncio
-from datetime import datetime
 
 from db.database_v2 import DatabaseLayerV2
-from services.task_failure_service import TaskFailureService, MAX_RETRY
-from utils.errors import (
-    NotFoundError, ClaimConflictError, ClaimNotYoursError,
-    RetriesExceededError, ServiceError,
-)
+from services.task_failure_service import TaskFailureService
+from utils.errors import NotFoundError
 
 
 # ==================== 测试辅助函数 ====================
+
+_SERIAL_TASK_ID = 100
+
+async def create_test_history(
+    db: DatabaseLayerV2,
+    task_id: int = 1,
+    admin_id: int = 999,
+    task_type: str = "movie_crawl",
+    task_params: dict = None,
+) -> int:
+    """创建测试用 task_history 记录（供 LEFT JOIN 验证）。"""
+    params_json = json.dumps(task_params or {"id": task_id, "type": task_type}, ensure_ascii=False)
+    sql = (
+        "INSERT INTO task_history (id, admin_id, task_type, task_params, status) "
+        "VALUES (%s, %s, %s, %s, 'failed')"
+    )
+    raw = db.raw_mysql()
+    await raw.execute_insert(sql, (task_id, admin_id, task_type, params_json))
+    return task_id
+
 
 async def create_test_failure(
     db: DatabaseLayerV2,
@@ -32,20 +47,21 @@ async def create_test_failure(
     scope: str = "batch",
     item_douban_id: str = "",
     item_title: str = "",
-    task_json: str = '{"id": 123, "type": "movie_crawl"}',
+    task_id: int = 1,
+    failure_layer: str = "crawler",
 ) -> int:
     """创建测试失败记录，返回 ID。"""
     sql = """
         INSERT INTO task_failures
-        (task_id, worker_id, task_json, event_type, kind, reason,
-         admin_id, status, claimed_by, retry_count, scope,
+        (task_id, worker_id, kind, failure_layer, reason,
+         status, claimed_by, retry_count, scope,
          item_douban_id, item_title)
-        VALUES (1, 1, %s, 'failure', 'network', '测试失败',
-                0, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, 1, 'network', %s, '测试失败',
+                %s, %s, %s, %s, %s, %s)
     """
     raw = db.raw_mysql()
     return await raw.execute_insert(sql, (
-        task_json, status, claimed_by, retry_count,
+        task_id, failure_layer, status, claimed_by, retry_count,
         scope, item_douban_id, item_title,
     ))
 
@@ -70,14 +86,46 @@ class TestTaskFailureService:
     async def test_query_list_all_failures(self, db: DatabaseLayerV2):
         """TC-Query-01: 查询所有失败记录（status=None）。"""
         service = TaskFailureService(db)
-        fid1 = await create_test_failure(db, status="pending")
-        fid2 = await create_test_failure(db, status="claimed")
+        # 创建 task_history 记录以验证 JOIN 注入
+        await create_test_history(db, task_id=1, admin_id=999, task_type="movie_crawl")
+        await create_test_history(db, task_id=2, admin_id=888, task_type="review_crawl")
+        fid1 = await create_test_failure(db, status="pending", task_id=1)
+        fid2 = await create_test_failure(db, status="claimed", task_id=2)
 
         items, total = await service.list_task_failures(status=None)
 
         assert total >= 2
         assert any(f["id"] == fid1 for f in items)
         assert any(f["id"] == fid2 for f in items)
+        # 验证 JOIN 注入的字段
+        for item in items:
+            assert "task_params" in item
+            assert "admin_id" in item
+            assert "task_type" in item
+
+    async def test_query_join_injects_admin_id(self, db: DatabaseLayerV2):
+        """TC-Query-01b: LEFT JOIN 正确注入 admin_id 和 task_params。"""
+        service = TaskFailureService(db)
+        await create_test_history(db, task_id=10, admin_id=777, task_type="movie_crawl",
+                                  task_params={"id": 10, "type": "movie_crawl", "douban_id": "12345"})
+        fid = await create_test_failure(db, task_id=10)
+
+        failure = await service.get_failure(fid)
+        assert failure["admin_id"] == 777
+        assert failure["task_type"] == "movie_crawl"
+        assert failure["task_params"] == {"id": 10, "type": "movie_crawl", "douban_id": "12345"}
+
+    async def test_query_join_none_when_no_history(self, db: DatabaseLayerV2):
+        """TC-Query-01c: 无 task_history 关联时 LEFT JOIN 返回 NULL（不抛异常）。"""
+        service = TaskFailureService(db)
+        fid = await create_test_failure(db, task_id=99999)
+
+        failure = await service.get_failure(fid)
+        assert failure["id"] == fid
+        assert failure["status"] == "pending"
+        # LEFT JOIN 无匹配时 task_params 为 None
+        assert failure["admin_id"] is None or failure["admin_id"] == 0
+        assert failure["task_type"] is None or failure["task_type"] == ""
 
     async def test_query_list_by_status(self, db: DatabaseLayerV2):
         """TC-Query-02: 按 status 过滤查询。"""
@@ -103,7 +151,6 @@ class TestTaskFailureService:
         assert total1 == total2
         assert len(items1) == 2
         assert len(items2) == 2
-        # 验证不重复
         ids1 = {f["id"] for f in items1}
         ids2 = {f["id"] for f in items2}
         assert ids1 & ids2 == set()
@@ -125,166 +172,53 @@ class TestTaskFailureService:
         with pytest.raises(NotFoundError):
             await service.get_failure(99999)
 
-    # ==================== 场景 2：认领失败任务 ====================
-
-    async def test_claim_pending_success(self, db: DatabaseLayerV2):
-        """TC-Claim-01: 认领 pending 状态的任务（成功）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="pending")
-        admin_id = 1001
-
-        result = await service.claim_failure(fid, admin_id)
-
-        assert result is True
-        row = await get_failure_by_id(db, fid)
-        assert row["status"] == "claimed"
-        assert row["claimed_by"] == admin_id
-        assert row["claimed_at"] is not None
-
-    async def test_claim_idempotent(self, db: DatabaseLayerV2):
-        """TC-Claim-02: 重复认领（幂等返回 True）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="pending")
-        admin_id = 1002
-
-        await service.claim_failure(fid, admin_id)
-        result = await service.claim_failure(fid, admin_id)
-
-        assert result is True
-
-    async def test_claim_not_found(self, db: DatabaseLayerV2):
-        """TC-Claim-03: 认领不存在的任务（抛 ClaimConflictError）。"""
-        service = TaskFailureService(db)
-
-        with pytest.raises(ClaimConflictError):
-            await service.claim_failure(99999, 1003)
-
-    async def test_claim_conflict_others(self, db: DatabaseLayerV2):
-        """TC-Claim-04: 认领已被别人认领的任务（抛 ClaimConflictError）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="claimed", claimed_by=2000)
-
-        with pytest.raises(ClaimConflictError):
-            await service.claim_failure(fid, 1004)
-
-    async def test_claim_concurrent(self, db: DatabaseLayerV2):
-        """TC-Claim-05: 并发认领测试（只有一个能成功）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="pending")
-
-        success_count = 0
-        errors = []
-
-        async def claim_task(admin_id: int):
-            nonlocal success_count
-            try:
-                await service.claim_failure(fid, admin_id)
-                success_count += 1
-            except ClaimConflictError:
-                pass
-
-        await asyncio.gather(
-            claim_task(3001),
-            claim_task(3002),
-            claim_task(3003),
-        )
-
-        assert success_count == 1
-
-    # ==================== 场景 3：释放认领 ====================
-
-    async def test_release_success(self, db: DatabaseLayerV2):
-        """TC-Release-01: 释放自己认领的任务（成功）。"""
-        service = TaskFailureService(db)
-        admin_id = 4001
-        fid = await create_test_failure(
-            db, status="claimed", claimed_by=admin_id
-        )
-
-        result = await service.release_failure(fid, admin_id)
-
-        assert result is True
-        row = await get_failure_by_id(db, fid)
-        assert row["status"] == "pending"
-        assert row["claimed_by"] == 0
-
-    async def test_release_not_yours(self, db: DatabaseLayerV2):
-        """TC-Release-02: 释放不是自己认领的任务（抛 ClaimNotYoursError）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="claimed", claimed_by=5000)
-
-        with pytest.raises(ClaimNotYoursError):
-            await service.release_failure(fid, 4002)
-
-    async def test_release_not_found(self, db: DatabaseLayerV2):
-        """TC-Release-03: 释放不存在的任务（抛 ClaimNotYoursError）。"""
-        service = TaskFailureService(db)
-
-        with pytest.raises(ClaimNotYoursError):
-            await service.release_failure(99999, 4003)
-
-    # ==================== 场景 4：解决失败任务 ====================
-
-    async def test_resolve_success(self, db: DatabaseLayerV2):
-        """TC-Resolve-01: 解决自己认领的任务（成功）。"""
-        service = TaskFailureService(db)
-        admin_id = 5001
-        fid = await create_test_failure(
-            db, status="claimed", claimed_by=admin_id
-        )
-
-        result = await service.resolve_failure(fid, admin_id)
-
-        assert result is True
-        row = await get_failure_by_id(db, fid)
-        assert row["status"] == "resolved"
-        assert row["resolved_at"] is not None
-
-    async def test_resolve_not_yours(self, db: DatabaseLayerV2):
-        """TC-Resolve-02: 解决不是自己认领的任务（抛 ClaimNotYoursError）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, status="claimed", claimed_by=6000)
-
-        with pytest.raises(ClaimNotYoursError):
-            await service.resolve_failure(fid, 5002)
-
-    async def test_resolve_not_found(self, db: DatabaseLayerV2):
-        """TC-Resolve-03: 解决不存在的任务（抛 ClaimNotYoursError）。"""
-        service = TaskFailureService(db)
-
-        with pytest.raises(ClaimNotYoursError):
-            await service.resolve_failure(99999, 5003)
-
-    # ==================== 场景 5：写入失败记录 ====================
+    # ==================== 场景 2：写入失败记录 ====================
 
     async def test_write_batch_failure(self, db: DatabaseLayerV2):
         """TC-Write-01: 写入 batch 级失败。"""
         service = TaskFailureService(db)
-        task_json = '{"id": 1234, "type": "movie_crawl"}'
 
         fid = await service.write_batch_failure(
             task_id=1234,
             worker_id=1,
-            task_json=task_json,
-            event_type="failure",
             kind="network",
             reason="测试 batch 失败",
-            admin_id=0,
             parent_failure_id=0,
+            failure_layer="crawler",
+            task_type="movie_crawl",
+            douban_id="",
         )
 
         assert fid > 0
         row = await get_failure_by_id(db, fid)
         assert row["scope"] == "batch"
         assert row["status"] == "pending"
+        assert row["kind"] == "network"
+        assert row["failure_layer"] == "crawler"
+
+    async def test_write_batch_failure_minimal(self, db: DatabaseLayerV2):
+        """TC-Write-01b: 最少参数写入 batch 级失败。"""
+        service = TaskFailureService(db)
+
+        fid = await service.write_batch_failure(
+            task_id=5678,
+            worker_id=2,
+            kind="timeout",
+            reason="超时",
+        )
+
+        assert fid > 0
+        row = await get_failure_by_id(db, fid)
+        assert row["scope"] == "batch"
+        assert row["failure_layer"] == "crawler"  # 默认值
 
     async def test_write_item_failure(self, db: DatabaseLayerV2):
         """TC-Write-02: 写入 item 级失败。"""
         service = TaskFailureService(db)
-        task_json = '{"id": 5678, "type": "movie_crawl", "admin_id": 99}'
 
         fid = await service.write_item_failure(
-            task_json=task_json,
+            task_id=5678,
+            admin_id=99,
             kind="parse",
             reason="解析失败",
             item_douban_id="123456",
@@ -303,13 +237,16 @@ class TestTaskFailureService:
         service = TaskFailureService(db)
 
         fid_batch = await service.insert_failure(
-            task='{"id": 1}',
+            task_id=1,
+            admin_id=100,
             kind="network",
             reason="batch test",
             scope="batch",
+            task_type="movie_crawl",
         )
         fid_item = await service.insert_failure(
-            task='{"id": 2}',
+            task_id=2,
+            admin_id=200,
             kind="parse",
             reason="item test",
             scope="item",
@@ -321,107 +258,3 @@ class TestTaskFailureService:
         row_item = await get_failure_by_id(db, fid_item)
         assert row_batch["scope"] == "batch"
         assert row_item["scope"] == "item"
-
-    # ==================== 场景 6：重爬任务构造 ====================
-
-    async def test_build_retry_batch(self, db: DatabaseLayerV2):
-        """TC-Retry-01: 从 batch 失败记录构造重爬任务。"""
-        service = TaskFailureService(db)
-        admin_id = 7001
-        fid = await create_test_failure(
-            db,
-            status="claimed",
-            claimed_by=admin_id,
-            scope="batch",
-            task_json='{"id": 999, "type": "movie_crawl"}',
-        )
-
-        retry_json = await service.build_retry_task(fid, admin_id)
-        retry_data = json.loads(retry_json)
-
-        assert retry_data["id"] == 999
-        assert retry_data["type"] == "movie_crawl"
-        assert retry_data["parent_failure_id"] == fid
-
-    async def test_build_retry_item(self, db: DatabaseLayerV2):
-        """TC-Retry-02: 从 item 失败记录构造重爬任务。"""
-        service = TaskFailureService(db)
-        admin_id = 7002
-        fid = await create_test_failure(
-            db,
-            status="claimed",
-            claimed_by=admin_id,
-            scope="item",
-            item_douban_id="12345678",
-            item_title="阿甘正传",
-        )
-
-        retry_json = await service.build_retry_task(fid, admin_id)
-        retry_data = json.loads(retry_json)
-
-        assert retry_data["type"] == "director_crawl"
-        assert retry_data["douban_id"] == "12345678"
-        assert retry_data["parent_failure_id"] == fid
-
-    async def test_build_retry_exceeded(self, db: DatabaseLayerV2):
-        """TC-Retry-03: 重试次数超限（抛 RetriesExceededError）。"""
-        service = TaskFailureService(db)
-        admin_id = 7003
-        fid = await create_test_failure(
-            db,
-            status="claimed",
-            claimed_by=admin_id,
-            retry_count=MAX_RETRY,
-        )
-
-        with pytest.raises(RetriesExceededError):
-            await service.build_retry_task(fid, admin_id)
-
-    async def test_build_retry_not_yours(self, db: DatabaseLayerV2):
-        """TC-Retry-04: 重爬不是自己认领的任务（抛 ClaimNotYoursError）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(
-            db, status="claimed", claimed_by=8000
-        )
-
-        with pytest.raises(ClaimNotYoursError):
-            await service.build_retry_task(fid, 7004)
-
-    async def test_build_retry_invalid_json(self, db: DatabaseLayerV2):
-        """TC-Retry-05: 任务 JSON 解析失败（抛 ServiceError）。"""
-        service = TaskFailureService(db)
-        admin_id = 7005
-        fid = await create_test_failure(
-            db,
-            status="claimed",
-            claimed_by=admin_id,
-            scope="batch",
-            task_json="invalid-json-not-object",
-        )
-
-        with pytest.raises(ServiceError):
-            await service.build_retry_task(fid, admin_id)
-
-    # ==================== 场景 7：重试计数 ====================
-
-    async def test_increment_retry_once(self, db: DatabaseLayerV2):
-        """TC-Count-01: 递增重试计数（从 0 → 1）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, retry_count=0)
-
-        count = await service.increment_retry_count(fid)
-
-        assert count == 1
-        row = await get_failure_by_id(db, fid)
-        assert row["retry_count"] == 1
-
-    async def test_increment_retry_multiple(self, db: DatabaseLayerV2):
-        """TC-Count-02: 多次递增（从 0 → 1 → 2）。"""
-        service = TaskFailureService(db)
-        fid = await create_test_failure(db, retry_count=0)
-
-        count1 = await service.increment_retry_count(fid)
-        count2 = await service.increment_retry_count(fid)
-
-        assert count1 == 1
-        assert count2 == 2

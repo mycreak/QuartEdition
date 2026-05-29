@@ -126,16 +126,14 @@ SQLS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     # task_failures 表 — 失败任务记录（服务层依赖）
+    # 2026-05-29: 删除 task_json / admin_id / event_type 冗余列
     """CREATE TABLE IF NOT EXISTS task_failures (
       id                INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
       task_id           BIGINT        NOT NULL DEFAULT 0,
       worker_id         INT           NOT NULL DEFAULT 0,
-      task_json         JSON          NOT NULL,
-      event_type        VARCHAR(16)   NOT NULL DEFAULT 'failure' COMMENT 'failure / cancelled',
-      kind              VARCHAR(32)   NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation',
+      kind              VARCHAR(32)   NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation / browser / unknown',
       failure_layer     VARCHAR(16)   NOT NULL DEFAULT 'crawler' COMMENT 'crawler | storage | ai | system — 错误来源层',
       reason            VARCHAR(1024) DEFAULT NULL,
-      admin_id          INT           NOT NULL DEFAULT 0,
       status            VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT 'pending / claimed / resolved',
       claimed_by        INT           NOT NULL DEFAULT 0,
       claimed_at        DATETIME      DEFAULT NULL,
@@ -151,8 +149,7 @@ SQLS = [
       INDEX idx_status (status),
       INDEX idx_claimed_by (claimed_by),
       INDEX idx_task (task_id),
-      INDEX idx_kind (kind),
-      INDEX idx_layer (failure_layer)
+      INDEX idx_kind (kind)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 
     # movies 表 — 电影主表（爬虫目标）

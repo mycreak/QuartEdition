@@ -272,21 +272,25 @@ class Monitor:
         同时通过 WebSocket 向提交任务的管理员推送通知。
         """
         admin_id, task_id = self._extract_task_meta(event.task)
+        # 一次解析 task JSON，提取多个字段（避免重复 json.loads）
+        task_type = ""
+        douban_id = ""
         parent_failure_id = 0
+        task_created_at: float = 0
         try:
-            data = json.loads(event.task)
-            parent_failure_id = data.get("parent_failure_id", 0)
+            tdata = json.loads(event.task)
+            parent_failure_id = tdata.get("parent_failure_id", 0)
+            task_type = tdata.get("type", "")
+            douban_id = tdata.get("douban_id", "")
+            task_created_at = tdata.get("created_at", 0)
         except (json.JSONDecodeError, TypeError):
             pass
 
         try:
             from services.task_failure_service import _get_failure_service
-            # 从 failure_service 导入 classify_failure_layer
             from crawler.failure_service import FailureKind, classify_failure_layer
-            # 用事件中的 kind 字符串构造 FailureKind，推导 failure_layer
             try:
                 kind_enum = FailureKind(event.kind.value)
-                # 这里没有异常对象，降级用 kind 推导
                 layer = "storage" if kind_enum == FailureKind.STORAGE else (
                     "system" if kind_enum == FailureKind.BROWSER else "crawler"
                 )
@@ -297,16 +301,14 @@ class Monitor:
             await svc.write_batch_failure(
                 task_id=task_id,
                 worker_id=event.worker_id,
-                task_json=event.task,
-                event_type=event.event_type.value,
                 kind=event.kind.value,
                 reason=event.reason,
-                admin_id=admin_id,
                 parent_failure_id=parent_failure_id,
                 failure_layer=layer,
                 snapshot=event.snapshot,
+                task_type=task_type,
+                douban_id=douban_id,
             )
-            # storage 层失败 → 检查 DB 连接 + 追踪计数
             if layer == "storage":
                 await self._check_storage_failure(event, reason=event.reason)
         except Exception:
@@ -314,22 +316,10 @@ class Monitor:
 
         try:
             from services.task_history_service import _get_history_service
-            task_type = ""
-            try:
-                tdata = json.loads(event.task)
-                task_type = tdata.get("type", "")
-            except (json.JSONDecodeError, TypeError):
-                pass
             if task_type not in ("movie_detail_crawl", "review_full_crawl"):
                 elapsed_ms = None
-                if event.task:
-                    try:
-                        tdata = json.loads(event.task)
-                        created = tdata.get("created_at", 0)
-                        if created:
-                            elapsed_ms = int((event.timestamp - created) * 1000)
-                    except Exception:
-                        pass
+                if task_created_at:
+                    elapsed_ms = int((event.timestamp - task_created_at) * 1000)
                 await _get_history_service().update_status(
                     task_id=task_id,
                     status="failed",
@@ -339,7 +329,6 @@ class Monitor:
         except Exception:
             pass
 
-        # 清除 review_body_crawl 去重 key，释放被阻塞的重提交
         await self._clear_review_dedup_key(event.task)
 
         if self.ws_manager and admin_id > 0:

@@ -1656,10 +1656,9 @@ class CrawlerEngine:
         try:
             from services.task_failure_service import _get_failure_service
             svc = _get_failure_service()
-            task_json = json.dumps(task_data, ensure_ascii=False)
 
             await svc.insert_failure(
-                task=task_json,
+                task_id=task_data.get("id", 0),
                 admin_id=task_data.get("admin_id", 0),
                 kind=kind,
                 reason=reason,

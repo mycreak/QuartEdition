@@ -469,9 +469,10 @@ const adminList = ref<{ id: number; username: string; display_name: string }[]>(
 
 async function fetchAdminList() {
   try {
-    const res = await adminUsersApi.list()
-    adminList.value = res.data.items || []
-  } catch { /* ignore */ }
+  const res = await adminUsersApi.list()
+  // 只保留管理员角色的用户，过滤普通用户
+  adminList.value = (res.data.items || []).filter((user: any) => user.role === 'admin')
+} catch { /* ignore */ }
 }
 
 function getAdminName(id: number): string {

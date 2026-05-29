@@ -73,23 +73,46 @@ class UserActionService:
         self._config_loaded = False
 
     async def _ensure_config(self) -> None:
-        """懒加载 action 权重配置"""
+        """懒加载 action 权重 + comment rating 调节配置"""
         if self._config_loaded:
             return
         try:
             raw = self.db.raw_mysql()
             rows = await raw.execute_query(
                 "SELECT config_key, config_value FROM config_score_weight "
-                "WHERE config_key LIKE 'action.%'"
+                "WHERE config_key LIKE 'action.%' "
+                "   OR config_key LIKE 'comment.rating_%'"
             )
             if rows:
                 for r in rows:
                     key = r["config_key"]
                     if key.startswith("action."):
-                        action_name = key[7:]  # "action.watched" -> "watched"
+                        action_name = key[7:]
                         self._action_weights[action_name] = float(r["config_value"])
         except Exception:
             logger.warning("[UserAction] 配置加载失败，使用默认权重", exc_info=True)
+
+        # 评论评分调节因子 — 默认值兜底
+        self._rating_neutral = 3.0
+        self._rating_factor_max = 1.0
+        self._rating_factor_min = -0.5
+        try:
+            raw = self.db.raw_mysql()
+            rating_rows = await raw.execute_query(
+                "SELECT config_key, config_value FROM config_score_weight "
+                "WHERE config_key IN ('comment.rating_neutral', 'comment.rating_factor_max', 'comment.rating_factor_min')"
+            )
+            for r in rating_rows:
+                key = r["config_key"]
+                if key == "comment.rating_neutral":
+                    self._rating_neutral = float(r["config_value"])
+                elif key == "comment.rating_factor_max":
+                    self._rating_factor_max = float(r["config_value"])
+                elif key == "comment.rating_factor_min":
+                    self._rating_factor_min = float(r["config_value"])
+        except Exception:
+            logger.warning("[UserAction] rating 配置加载失败，使用默认值", exc_info=True)
+
         self._config_loaded = True
 
     def _action_weight(self, action: str) -> float:
@@ -97,6 +120,30 @@ class UserActionService:
         if val is not None:
             return val
         return _DEFAULT_ACTION_WEIGHTS.get(action, 1.0)
+
+    def _rating_factor(self, rating: Optional[float]) -> float:
+        """
+        输入: rating (1~5 或 None/0)
+        输出: [factor_min, factor_max] 区间的调节因子
+
+        设计: 线性映射，3 星为中性点 (factor=0)
+              5星 → factor_max, 1星 → factor_min
+              未评分 (None/0) → 0.0
+        边界: rating 自动 clamp 到 [1, 5]，防止异常输入
+        """
+        if rating is None or rating <= 0:
+            return 0.0
+
+        rating = min(5.0, max(1.0, rating))
+
+        neutral = self._rating_neutral
+        factor_max = self._rating_factor_max
+        factor_min = self._rating_factor_min
+
+        if rating >= neutral:
+            return factor_max * (rating - neutral) / (5.0 - neutral)
+        else:
+            return factor_min * (neutral - rating) / (neutral - 1.0)
 
     # ═══════════════════════════════════════════════════════════
     # 公开方法
@@ -143,7 +190,7 @@ class UserActionService:
 
         # ── ⑤ 计算分数 ──
         aw = self._action_weight(action)
-        deltas, total_score = await self._calc_score_deltas(movie_id, aw)
+        deltas, total_score = await self._calc_score_deltas(movie_id, aw, action=action, rating=rating)
 
         # ── ⑥ comment: 先写 MongoDB ──
         review_mongo_id: Optional[str] = None
@@ -492,16 +539,30 @@ class UserActionService:
         # comment 不改变 user_movie_status
 
     async def _calc_score_deltas(
-        self, movie_id: int, action_weight: float
+        self, movie_id: int, action_weight: float,
+        action: str = "",
+        rating: Optional[float] = None,
     ) -> tuple:
         """
-        输入: movie_id, action_weight
+        输入: movie_id, action_weight, action, rating
         输出: (deltas_list, total_score)
         deltas_list = [{"dimension":"director", "label":"吕克·贝松", "delta":2.0}, ...]
 
-        公式: delta = action_weight × tag.weight
-              (tag.weight 已包含 dim_weight × confidence × actor_decay)
+        公式:
+            effective_weight = action_weight × rating_factor(rating)  ← 仅 comment
+                               action_weight                           ← 其他操作
+            delta = effective_weight × tag.weight
+            (tag.weight 已包含 dim_weight × confidence × actor_decay)
         """
+        effective_weight = action_weight
+        if action == "comment":
+            factor = self._rating_factor(rating)
+            effective_weight = round(action_weight * factor, 4)
+            logger.info(
+                "[UserAction] comment rating=%.1f factor=%.2f effective_weight=%.4f | aw=%.1f",
+                rating or 0, factor, effective_weight, action_weight,
+            )
+
         ctx_svc = get_movie_context()
         ctx = await ctx_svc.build(movie_id)
         if "error" in ctx:
@@ -510,7 +571,7 @@ class UserActionService:
         deltas: List[Dict[str, Any]] = []
         total = 0.0
         for tag in ctx["tags"]:
-            d = round(action_weight * tag["weight"], 4)
+            d = round(effective_weight * tag["weight"], 4)
             deltas.append({
                 "dimension": tag["dimension"],
                 "label": tag["label"],

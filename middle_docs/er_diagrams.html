@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>QuartEdition 数据库局部ER图</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #fafafa;
+      padding: 32px;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+    h1 { text-align: center; margin-bottom: 8px; color: #1a1a2e; font-size: 22px; }
+    .subtitle { text-align: center; color: #666; margin-bottom: 32px; font-size: 14px; }
+
+    .er-section {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      margin-bottom: 36px;
+      padding: 28px;
+      page-break-inside: avoid;
+    }
+    .er-section h2 {
+      font-size: 18px;
+      color: #0f3460;
+      border-bottom: 2px solid #0f3460;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+    }
+    .er-caption {
+      color: #888;
+      font-size: 13px;
+      margin-bottom: 18px;
+      line-height: 1.6;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+      padding: 12px 0;
+    }
+
+    /* 图例 */
+    .legend-bar {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #555;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 2px;
+      display: inline-block;
+    }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .er-section { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>QuartEdition 数据库局部 E-R 图</h1>
+<p class="subtitle">围绕 movies 和 users 两个中心实体展开 · 共 2 张</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="er-section">
+  <h2>图 1 · 电影数据组织 E-R 图（中心实体 = movies）</h2>
+  <p class="er-caption">
+    核心叙事：豆瓣 ID 资产 → 电影入库 → 关联人员 / 地区 / 类型 / AI 标签 / AI 总结。<br>
+    含 4 张 N:N 桥接表（movie_credits / movie_genres / movie_regions / movie_style），
+    虚线关系表示非外键约束的逻辑引用。
+  </p>
+  <div class="mermaid">
+erDiagram
+    movies {
+        bigint id PK "电影自增ID"
+        varchar douban_id UK "豆瓣电影ID"
+        varchar title "中文标题"
+        varchar poster_url "海报CDN URL"
+        int release_year "发行年份"
+        tinyint is_published "上架状态"
+        decimal average "豆瓣平均分"
+        int rating_count "评分人数"
+    }
+    douban_ids {
+        varchar douban_id PK "豆瓣电影ID"
+        varchar title "电影标题"
+        tinyint is_acquired "是否已认领"
+        tinyint is_scraped "是否已爬取"
+        datetime acquired_at "认领时间"
+    }
+    people {
+        int id PK "人员自增ID"
+        varchar name "姓名"
+        varchar douban_id "豆瓣人员ID"
+        tinyint is_duplicate "重名标记"
+    }
+    regions {
+        int id PK "地区自增ID"
+        varchar name UK "地区名称"
+    }
+    crawl_progress {
+        int id PK "进度自增ID"
+        int type_num UK "豆瓣类型编号"
+        varchar interval_id UK "评分区间"
+        varchar type_name "类型中文名"
+        int douban_total "影片总量"
+        int ids_fetched "已获取ID数"
+    }
+    movie_style_tag {
+        int id PK "标签自增ID"
+        varchar name UK "标签名称"
+        varchar dimension UK "所属维度"
+    }
+    review_summary {
+        int id PK "总结自增ID"
+        int movie_id UK "关联电影ID"
+        text full_summary "AI总结文本"
+        json review_tags "评论标签数组"
+    }
+    movie_review {
+        varchar review_id PK "豆瓣长评ID"
+        bigint movie_id "关联电影ID"
+        varchar title "长评标题"
+        varchar author "作者昵称"
+        varchar status "爬取状态"
+    }
+    movie_credits {
+        bigint movie_id PK "电影ID"
+        int person_id PK "人员ID"
+        varchar role_type PK "角色类型"
+    }
+    movie_genres {
+        bigint movie_id PK "电影ID"
+        int type_num PK "豆瓣类型编号"
+    }
+    movie_regions {
+        bigint movie_id PK "电影ID"
+        int region_id PK "地区ID"
+    }
+    movie_style {
+        bigint movie_id PK "电影ID"
+        int tag_id PK "标签ID"
+        decimal confidence "AI可信度"
+    }
+
+    douban_ids ||--o| movies : "douban_id 幂等匹配"
+    movies ||--o{ movie_review : "含长评摘要"
+    movies ||--|| review_summary : "AI长评总结"
+    movies ||--o{ movie_credits : "出演人员关联"
+    movie_credits }o--|| people : "出演"
+    movies ||--o{ movie_genres : "电影类型关联"
+    movie_genres }o--|| crawl_progress : "type_num 逻辑引用"
+    movies ||--o{ movie_regions : "上映地区关联"
+    movie_regions }o--|| regions : "属于"
+    movies ||--o{ movie_style : "风格标签关联"
+    movie_style }o--|| movie_style_tag : "标记"
+  </div>
+  <div class="legend-bar">
+    <span class="legend-item"><span class="legend-dot" style="background:#e8f5e9"></span> 核心实体</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#fff3e0"></span> 上游资产</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#e3f2fd"></span> N:N 桥接表</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#fce4ec"></span> AI 生成内容</span>
+    <span>|</span>
+    <span class="legend-item">||--|| 1:1</span>
+    <span class="legend-item">||--o{ 1:N</span>
+    <span class="legend-item">}o--|| N:1</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="er-section">
+  <h2>图 2 · 用户行为与任务 E-R 图（中心实体 = users）</h2>
+  <p class="er-caption">
+    核心叙事：用户注册 → 权限授予 → 管理员下发爬虫任务 → 普通用户标记/收藏电影 → 标签画像 → 推荐输出 + 人工片单。<br>
+    含 1 张 N:N 桥接表（user_permissions），task_history.parent_task_id 为自引用。
+  </p>
+  <div class="mermaid">
+erDiagram
+    users {
+        int id PK "用户自增ID"
+        bigint uuid UK "对外唯一标识"
+        varchar username UK "登录用户名"
+        varchar password_hash "bcrypt哈希"
+        varchar display_name "显示昵称"
+        varchar avatar_url "头像URL"
+        tinyint is_active "帐号状态"
+    }
+    permissions {
+        varchar code PK "权限编码"
+        varchar name "权限中文名"
+        varchar description "权限描述"
+    }
+    user_permissions {
+        int user_id PK "用户ID"
+        varchar permission_code PK "权限编码"
+        int granted_by "授权人ID"
+        datetime granted_at "授权时间"
+    }
+    task_history {
+        bigint id PK "任务ID(snowflake)"
+        int admin_id "下发管理员ID"
+        varchar task_type "任务类型"
+        json task_params "任务参数"
+        bigint parent_task_id "父任务ID"
+        varchar status "任务状态"
+        int elapsed_ms "执行耗时"
+    }
+    task_failures {
+        int id PK "失败自增ID"
+        bigint task_id "关联任务ID"
+        varchar kind "失败种类"
+        varchar failure_layer "失败层级"
+        varchar status "处理状态"
+        int claimed_by "认领管理员ID"
+        int retry_count "重试次数"
+    }
+    user_movie_status {
+        int user_id PK "用户ID"
+        bigint movie_id PK "电影ID"
+        tinyint want_watch "想看"
+        tinyint watched "看过"
+        tinyint favorite "收藏"
+        tinyint reviewed "已评论"
+    }
+    user_tag_score {
+        int user_id PK "用户ID"
+        varchar dimension PK "标签维度"
+        varchar label PK "标签文本"
+        decimal score "偏好分数"
+    }
+    playlists {
+        bigint id PK "片单自增ID"
+        varchar title "片单标题"
+        json movie_ids "电影ID有序列表"
+        int sort_order "排序权重"
+        tinyint is_published "上架状态"
+        datetime publish_at "计划上架时间"
+        datetime unpublish_at "计划下架时间"
+        int created_by "创建管理员ID"
+    }
+
+    users ||--o{ user_permissions : "授权"
+    user_permissions }o--|| permissions : "持有"
+    users ||--o{ task_history : "下发爬虫任务"
+    task_history ||--o{ task_failures : "失败记录"
+    users ||--o{ user_movie_status : "标记电影"
+    users ||--o{ user_tag_score : "标签画像"
+    users ||--o{ playlists : "创建片单"
+  </div>
+  <div class="legend-bar">
+    <span class="legend-item"><span class="legend-dot" style="background:#e8f5e9"></span> 用户与权限</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#fff3e0"></span> 任务调度</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#e3f2fd"></span> 推荐行为</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#fce4ec"></span> 人工片单</span>
+    <span>|</span>
+    <span class="legend-item">||--|| 1:1</span>
+    <span class="legend-item">||--o{ 1:N</span>
+    <span class="legend-item">}o--|| N:1</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div style="text-align:center; color:#999; margin-top:28px; font-size:13px;">
+  QuartEdition · 豆瓣电影数据采集与管理平台 · 数据库局部 E-R 图<br>
+  图 1（12 实体 / 11 关系） · 图 2（8 实体 / 7 关系）<br>
+  导出：浏览器右键打印 → 另存为 PDF | Mermaid 源码可直接嵌入文档
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    er: {
+      useMaxWidth: true,
+      entityPadding: 20,
+      diagramPadding: 30,
+      fontSize: 13,
+    },
+  });
+</script>
+</body>
+</html>

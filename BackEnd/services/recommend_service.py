@@ -159,7 +159,8 @@ class RecommendService:
 
         每个维度: 收集该维度所有标签的 score，计算 μ 和 σ
         0 或 1 个标签 → CV=0
-        μ 太小（<0.01）→ CV=0
+        μ < 0.01     → CV=0
+        μ < 0        → CV=0 （负分无意义，强制探索模式）
         """
         groups: Dict[str, List[float]] = {d: [] for d in _ALL_DIMS}
         for t in tag_items:

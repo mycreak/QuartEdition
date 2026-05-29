@@ -224,6 +224,11 @@
               show-text
               class="mb-3"
             />
+            <p v-if="reviewRating > 0" class="rating-hint">
+              <template v-if="reviewRating >= 4">👍 好评将增加同类电影推荐</template>
+              <template v-else-if="reviewRating <= 2">👎 差评将减少同类电影推荐</template>
+              <template v-else>🤝 中性评价不影响推荐</template>
+            </p>
             <el-input
               v-model="reviewText"
               type="textarea"
@@ -1003,6 +1008,13 @@ onMounted(async () => {
 
 .review-form .mb-3 {
   margin-bottom: 12px;
+}
+
+.rating-hint {
+  font-size: 13px;
+  color: #909399;
+  margin: 0 0 8px 0;
+  text-align: center;
 }
 
 .review-form .mt-3 {

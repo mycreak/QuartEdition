@@ -39,7 +39,7 @@
 | `permissions` | `code` VARCHAR(32) PK | — | 权限字典 (14 条) |
 | `user_permissions` | `(user_id, permission_code)` PK | FK→users, FK→permissions | 用户权限 N:N |
 | `task_history` | BIGINT (snowflake) PK | `idx_admin_id`, `idx_status`, `idx_task_type`, `idx_created_at` | 任务历史 |
-| `task_failures` | INT AUTO_INCREMENT | `idx_status`, `idx_claimed_by`, `idx_task`, `idx_kind` | 失败任务 (18 列) |
+| `task_failures` | INT AUTO_INCREMENT | `idx_status`, `idx_claimed_by`, `idx_task`, `idx_kind` | 失败任务 (17 列) |
 | `movie_review` | `review_id` (PK) | `idx_movie(movie_id)`, `idx_status` | 长评待爬表 |
 | `movie_style_tag` | INT UNSIGNED AUTO_INCREMENT | `uk_name_dim(name, dimension)` UNIQUE | AI 风格标签字典 |
 | `movie_style` | `(movie_id, tag_id)` PK | `idx_tag`, FK→movies, FK→style_tag | 电影↔风格标签 N:N |
@@ -337,17 +337,17 @@ CREATE TABLE task_history (
 
 ### 4.2 task_failures — 失败任务
 
+> **2026-05-29 去冗余**：删除 `task_json` / `admin_id` / `event_type` 三列，
+> 查询时通过 `LEFT JOIN task_history` 获取 `task_params` / `admin_id` / `task_type`。
+
 ```sql
 CREATE TABLE task_failures (
   id                INT            NOT NULL AUTO_INCREMENT PRIMARY KEY,
   task_id           BIGINT         NOT NULL DEFAULT 0,
   worker_id         INT            NOT NULL DEFAULT 0,
-  task_json         JSON           NOT NULL,
-  event_type        VARCHAR(16)    NOT NULL DEFAULT 'failure' COMMENT 'failure / cancelled',
   kind              VARCHAR(32)    NOT NULL DEFAULT 'unknown' COMMENT 'network / timeout / parse / storage / abuse / validation / browser / unknown',
-  failure_layer     VARCHAR(16)    NOT NULL DEFAULT 'crawler' COMMENT 'crawler / storage / system',
+  failure_layer     VARCHAR(16)    NOT NULL DEFAULT 'crawler' COMMENT 'crawler / storage / ai / system',
   reason            VARCHAR(1024)  DEFAULT NULL,
-  admin_id          INT            NOT NULL DEFAULT 0,
   status            VARCHAR(16)    NOT NULL DEFAULT 'pending' COMMENT 'pending / claimed / resolved',
   claimed_by        INT            NOT NULL DEFAULT 0,
   claimed_at        DATETIME       DEFAULT NULL,

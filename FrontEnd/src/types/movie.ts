@@ -9,6 +9,9 @@ export interface Movie {
     count: number
   }
   genres: string[]
+  regions?: string[] | Region[]
+  ai_summary?: string
+  ai_tags?: string[]
   is_published?: boolean
 }
 

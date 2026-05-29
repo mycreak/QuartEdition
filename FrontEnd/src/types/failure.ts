@@ -1,6 +1,12 @@
 export interface TaskFailure {
   id: number
   task_id: number
+  /** 来自 task_history LEFT JOIN，任务提交者 ID */
+  admin_id?: number
+  /** 来自 task_history LEFT JOIN，任务类型 */
+  task_type?: string
+  /** 来自 task_history LEFT JOIN，原始任务参数 */
+  task_params?: Record<string, unknown>
   kind: string
   reason: string
   status: 'pending' | 'claimed' | 'resolved'
