@@ -2,7 +2,6 @@
   <div v-loading="loading" class="admin-movie-detail">
     <div class="detail-nav">
       <el-button text @click="handleBack">← {{ backLabel }}</el-button>
-      <el-button text @click="$router.push(`/movies/${movieId}?from=admin`)" v-if="detail && detail.movie.is_published">查看用户端 →</el-button>
     </div>
 
     <ErrorAlert :message="error" @close="error = ''" />

@@ -484,6 +484,29 @@ const queue = reactive<QueueStatus>({
   queue_tasks: [],
   redis_tasks: [],
 })
+
+// 刚提交还没同步到队列的详情爬取任务ID临时存储
+const pendingSubmittedDoubanIds = ref(new Set<string>())
+
+// 正在执行/队列中的详情爬取任务douban_id集合
+const runningScrapeDoubanIds = computed(() => {
+  const ids = new Set<string>()
+  // 加入刚提交还没同步到队列的ID
+  pendingSubmittedDoubanIds.value.forEach(id => ids.add(id))
+  // 遍历执行中任务
+  queue.in_flight?.forEach(task => {
+    if (task.type === 'movie_scrape_task' && task.douban_id) {
+      ids.add(task.douban_id)
+    }
+  })
+  // 遍历队列中任务
+  queue.queue_tasks?.forEach(task => {
+    if (task.type === 'movie_scrape_task' && task.douban_id) {
+      ids.add(task.douban_id)
+    }
+  })
+  return ids
+})
 const detailLoading = ref(false)
 const progressList = ref<Array<Record<string, unknown>>>([])
 const progressLoading = ref(false)
@@ -625,6 +648,8 @@ async function fetchProgressDetail() {
     } else {
       stopSecondsTimer()
     }
+    // 队列数据同步完成，清空临时提交的ID集合
+    pendingSubmittedDoubanIds.value.clear()
   } catch { /* ignore */ } finally { detailLoading.value = false }
 }
 
@@ -680,11 +705,13 @@ function onTypeChange() {
 async function queryClaimedIds(query: string, cb: (items: { value: string; label: string; title: string }[]) => void) {
   try {
     const res = await adminDoubanIdsApi.list({ is_acquired: '1', keyword: query || '', page_size: 20 })
-    const items = (res.data.items || []).map(item => ({
-      value: item.douban_id,
-      label: `${item.douban_id}  ${item.title}`,
-      title: item.title,
-    }))
+    const items = (res.data.items || [])
+      .filter(item => !runningScrapeDoubanIds.value.has(item.douban_id)) // 过滤掉正在执行的任务ID
+      .map(item => ({
+        value: item.douban_id,
+        label: `${item.douban_id}  ${item.title}`,
+        title: item.title,
+      }))
     cb(items)
   } catch {
     cb([])
@@ -871,6 +898,14 @@ async function submitTask() {
     return
   }
 
+  // 校验详情爬取任务是否重复提交
+  if (taskForm.type === 'movie_scrape_task') {
+    if (runningScrapeDoubanIds.value.has(taskForm.scrape_douban_id)) {
+      ElMessage.error(`该电影ID ${taskForm.scrape_douban_id} 已有正在执行的爬取任务，请勿重复提交`)
+      return
+    }
+  }
+
   // 原有的单个任务提交模式
   submitting.value = true
   try {
@@ -903,10 +938,16 @@ async function submitTask() {
         break
     }
     await adminTasksApi.submit(payload)
-    ElMessage.success(`任务已提交 (${taskForm.type})`)
-    await fetchQueue()
-    await fetchProgress()
-    resetTaskFormKeepType()
+      ElMessage.success(`任务已提交 (${taskForm.type})`)
+      
+      // 提交详情爬取任务后立即加入临时过滤集合，解决队列同步延迟问题
+      if (taskForm.type === 'movie_scrape_task') {
+        pendingSubmittedDoubanIds.value.add(taskForm.scrape_douban_id)
+      }
+      
+      await fetchQueue()
+      await fetchProgress()
+      resetTaskFormKeepType()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '提交失败')
   } finally { submitting.value = false }
@@ -1060,6 +1101,7 @@ onMounted(() => {
   fetchQueue()
   fetchProgress()
   fetchHistory()
+  fetchProgressDetail() // 预加载队列详细数据，保证进入页面就可以过滤重复任务
 
   unsubTaskStarted = wsManager.on('task_started', () => {
     fetchProgressDetail()
