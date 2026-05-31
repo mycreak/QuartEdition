@@ -83,4 +83,8 @@ export const userActionApi = {
   /** 查询我的评论列表 */
   myComments: (page = 1, pageSize = 20) =>
     client.get<PaginatedResponse<{ movie_id: number; title?: string; text: string; rating?: number; date?: string }>>('/user/profile/comments', { params: { page, page_size: pageSize } }),
+
+  /** 查询我的用户画像标签 */
+  myTags: () =>
+    client.get<{ user_id: number; tags: { dimension: string; label: string; score: number; confidence?: number; source: string }[]; total_tags: number }>('/user/profile/tags'),
 }

@@ -38,6 +38,9 @@
                 {{ item.rating.toFixed(1) }}
               </span>
             </div>
+            <div class="recommend-reason">
+              {{ item.recommend_reason || '为你探索更多可能' }}
+            </div>
           </div>
         </div>
       </div>
@@ -211,9 +214,8 @@ async function fetchRecommend(): Promise<void> {
   try {
     const res = await moviesApi.recommend(10)
     recommendItems.value = res.data.items
-  } catch {
-    recommendItems.value = []
-    recommendError.value = '加载推荐失败'
+  } catch (err: any) {
+    recommendError.value = err.response?.data?.error || '加载推荐失败'
   } finally {
     recommendLoading.value = false
   }
@@ -372,13 +374,24 @@ onMounted(async () => {
   color: #e8a838;
   font-weight: 500;
 }
+.recommend-reason {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.4;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
 
 /* ═══ 右侧主内容区 ═══ */
 .main-content {
   margin-left: 280px;
   min-width: 0;
   padding: 24px;
-  max-width: 1600px;
 }
 
 /* ═══ 片单轮播 ═══ */
@@ -453,10 +466,10 @@ onMounted(async () => {
 .movie-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 20px;
+  gap: 12px;
   min-height: 300px;
   background: #fff;
-  padding: 20px;
+  padding: 16px;
   border-radius: 12px;
 }
 

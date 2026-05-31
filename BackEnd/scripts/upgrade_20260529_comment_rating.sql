@@ -7,8 +7,8 @@
 -- 评论评分调节配置（热加载，UPDATE 后无需重启）
 INSERT IGNORE INTO config_score_weight (config_key, config_value, description) VALUES
 ('comment.rating_neutral',    3.0,  '评分基准线（中性点, factor=0），默认 3 星'),
-('comment.rating_factor_max', 1.0,  '5星对应的调节因子上限，5星 = action_weight × 1.0'),
-('comment.rating_factor_min', -0.5, '1星对应的调节因子下限（负值=差评惩罚），1星 = action_weight × -0.5');
+('comment.rating_factor_max', 1.0,  '5星对应的调节因子上限，5星时 effective_weight = action_weight × rating_factor_max'),
+('comment.rating_factor_min', -0.5, '1星对应的调节因子下限，1星时 effective_weight = action_weight × rating_factor_min');
 
 -- 公式说明：
 --   rating_factor = factor_max × (rating - neutral) / (5.0 - neutral)    当 rating ≥ neutral

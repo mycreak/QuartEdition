@@ -40,5 +40,6 @@ export interface RecommendItem {
   release_year?: number
   score: number
   rating?: number
+  recommend_reason?: string
 }
 

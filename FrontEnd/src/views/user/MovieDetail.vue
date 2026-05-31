@@ -18,6 +18,12 @@
         返回个人中心
       </el-button>
     </div>
+    <!-- 其他情况（直接从首页点击电影）：显示返回主页按钮 -->
+    <div v-else class="back-bar">
+      <el-button :icon="ArrowLeft" @click="router.push('/')" text>
+        返回主页
+      </el-button>
+    </div>
     <ErrorAlert :message="error" @close="error = ''" />
 
     <template v-if="detail">
@@ -705,11 +711,13 @@ onMounted(async () => {
 .detail-page {
   max-width: 900px;
   margin: 0 auto;
-  padding: 32px 24px;
+  padding: 16px 24px 32px;
 }
 
 .back-bar {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+  position: relative;
+  top: -8px;
 }
 
 .detail-hero {

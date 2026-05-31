@@ -28,115 +28,129 @@
         </span>
       </div>
       <div class="card-genres" v-if="movie.genres?.length">
-        <el-tag
-          v-for="genre in movie.genres.slice(0, 3)"
-          :key="genre"
-          size="small"
-          class="genre-tag"
-        >
-          {{ genre }}
-        </el-tag>
+          <el-tag
+            v-for="genre in movie.genres.slice(0, 3)"
+            :key="genre"
+            size="small"
+            class="genre-tag"
+          >
+            {{ genre }}
+          </el-tag>
+        </div>
+        <!-- 推荐理由 -->
+        <div class="recommend-reason" v-if="showRecommendReason">
+          {{ movie.recommend_reason || '为你探索更多可能' }}
+        </div>
       </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { Movie } from '@/types/movie'
-import { formatRating } from '@/utils/format'
+import { formatRating, cleanUrl } from '@/utils/format'
 import { VideoCamera, StarFilled } from '@element-plus/icons-vue'
 
-defineProps<{ movie: Movie }>()
-
-/**
- * 清理URL中的多余字符（反引号、空格等）
- */
-function cleanUrl(url: string): string {
-  // 去掉前后的空格和反引号
-  return url.replace(/^[\s`]+|[\s`]+$/g, '')
-}
+const props = withDefaults(defineProps<{
+  movie: Movie & { recommend_reason?: string }
+  /** 是否显示推荐理由，默认不显示 */
+  showRecommendReason?: boolean
+}>(), {
+  showRecommendReason: false
+})
 </script>
 
 <style scoped>
 .movie-card {
-  background: #fff;
-  border-radius: 8px;
-  overflow: hidden;
+  width: 100%;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s;
 }
-
 .movie-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
 }
-
 .card-poster {
   width: 100%;
-  height: 280px;
-  background: #f0f0f0;
+  border-radius: 4px;
   overflow: hidden;
+  margin-bottom: 8px;
+  position: relative;
 }
-
+.card-poster {
+  aspect-ratio: 2/3;
+}
+.card-poster img,
+.card-poster .poster-placeholder,
+.card-poster .el-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
 .poster-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-
 .poster-placeholder {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
-  background: linear-gradient(135deg, #e0e0e0, #f5f5f5);
+  background: #f5f7fa;
+  color: #c0c4cc;
 }
-
 .card-body {
-  padding: 12px 14px;
+  padding: 0 2px;
 }
-
 .card-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1a1a2e;
-  margin: 0 0 8px;
-  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  margin: 0 0 4px 0;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
-
 .card-meta {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: #888;
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
 }
-
-.card-year {
-  color: #aaa;
-}
-
 .card-rating {
   display: flex;
   align-items: center;
   gap: 2px;
-  color: #e8a838;
-  font-weight: 500;
+  color: #e6a23c;
 }
-
 .card-genres {
   display: flex;
-  flex-wrap: wrap;
   gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
 }
-
 .genre-tag {
+  --el-tag-font-size: 10px;
+  --el-tag-padding: 0 3px;
+  --el-tag-height: 16px;
+  --el-tag-border-radius: 2px;
+}
+.recommend-reason {
   font-size: 11px;
+  color: #909399;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
 }
 </style>

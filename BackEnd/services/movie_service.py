@@ -268,8 +268,18 @@ class MovieService:
             params.append(published)
 
         if keyword:
-            where_clauses.append("(m.title LIKE %s OR m.douban_id = %s)")
-            params.extend([f"%{keyword}%", keyword])
+            like_pattern = f"%{keyword}%"
+            where_clauses.append(
+                "(m.title LIKE %s OR m.douban_id = %s "
+                "OR m.release_year LIKE %s "
+                "OR EXISTS (SELECT 1 FROM movie_credits mc JOIN people p ON mc.person_id = p.id "
+                "           WHERE mc.movie_id = m.id AND p.name LIKE %s) "
+                "OR EXISTS (SELECT 1 FROM movie_genres mg JOIN crawl_progress cp ON mg.type_num = cp.type_num "
+                "           WHERE mg.movie_id = m.id AND cp.type_name LIKE %s) "
+                "OR EXISTS (SELECT 1 FROM movie_regions mr JOIN regions r ON mr.region_id = r.id "
+                "           WHERE mr.movie_id = m.id AND r.name LIKE %s))"
+            )
+            params.extend([like_pattern, keyword, keyword, like_pattern, like_pattern, like_pattern])
 
         if type_num:
             where_clauses.append(

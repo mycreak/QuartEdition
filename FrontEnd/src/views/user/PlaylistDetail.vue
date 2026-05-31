@@ -10,7 +10,7 @@
       >
         <div class="hero-overlay">
           <el-button class="hero-back" :icon="ArrowLeft" @click="router.push('/')" text>
-            返回推荐
+            返回主页
           </el-button>
           <h1 class="hero-title">{{ detail.title }}</h1>
           <p class="hero-desc" v-if="detail.description">{{ detail.description }}</p>
@@ -91,7 +91,6 @@ onMounted(async () => {
 
 <style scoped>
 .playlist-detail-page {
-  max-width: 800px;
   margin: 0 auto;
   padding: 0 0 32px;
 }
@@ -105,19 +104,22 @@ onMounted(async () => {
   display: flex;
   align-items: flex-end;
   margin-bottom: 0;
+  position: relative;
 }
 
 .hero-overlay {
   width: 100%;
-  padding: 48px 32px 32px;
+  padding: 16px 32px 32px;
   background: linear-gradient(transparent 0%, rgba(0,0,0,0.5) 40%, rgba(0,0,0,0.85) 100%);
   color: #fff;
 }
 
 .hero-back {
-  margin-bottom: 16px;
   color: rgba(255,255,255,0.7);
   padding-left: 0;
+  position: absolute;
+  top: 16px;
+  left: 16px;
 }
 .hero-back:hover {
   color: #fff;

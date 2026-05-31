@@ -59,3 +59,12 @@ const CREW_ROLE_MAP: Record<string, string> = {
 export function formatCrewRole(role: string): string {
   return CREW_ROLE_MAP[role] || role
 }
+
+/**
+ * 清理URL中的多余字符（反引号、空格等）
+ */
+export function cleanUrl(url: string | null | undefined): string {
+  if (!url) return ''
+  // 去掉前后的空格和反引号
+  return url.replace(/^[\s`]+|[\s`]+$/g, '')
+}

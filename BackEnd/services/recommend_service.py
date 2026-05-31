@@ -21,7 +21,7 @@ services/recommend_service.py
 import logging
 import random
 import statistics
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from db.database_v2 import DatabaseLayerV2
 from services.movie_context import decade_label
@@ -44,6 +44,39 @@ _MIN_MU_FOR_CV = 0.01
 
 # 冷启动热门兜底数量
 _COLD_START_LIMIT = 50
+
+# 维度中文名（推荐理由文案用）
+_DIM_CN = {
+    "director": "导演", "actor": "演员", "genre": "类型",
+    "overall": "整体风格", "plot": "剧情风格", "visual": "画面风格",
+    "narrative": "叙事风格", "pacing": "节奏风格",
+    "era": "年代", "region": "地区",
+}
+
+
+def _format_reason(dim: str, label: str) -> str:
+    """
+    输入: 维度, 标签
+    输出: 维度感知的推荐理由文案
+
+    按维度自然语言习惯生成：
+      director/actor → "你喜欢的{label}"
+      genre          → "你喜欢的{label}片"
+      era            → "你喜欢的{label}老片"
+      region         → "你喜欢的{label}电影"
+      AI风格维度      → "你偏好的{label}{风格/剧情/画面/叙事/节奏}"
+    """
+    cn = _DIM_CN.get(dim, dim)
+
+    if dim in ("director", "actor"):
+        return f"你喜欢的{label}"
+    if dim == "genre":
+        return f"你喜欢的{label}片"
+    if dim == "era":
+        return f"你喜欢的{label}老片"
+    if dim == "region":
+        return f"你喜欢的{label}电影"
+    return f"你偏好的{label}{cn}"
 
 
 class RecommendService:
@@ -124,12 +157,14 @@ class RecommendService:
         scored = []
         for ctx in contexts:
             movie_id = ctx["movie_id"]
-            s = self._score_movie(ctx, cv_map, user_score_map)
-            scored.append((s, ctx))
+            s, match_info = self._score_movie(ctx, cv_map, user_score_map)
+            scored.append((s, ctx, match_info))
 
         # ── ⑦ 排序 → top_n ──
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[:top_n]
+        # 保留最佳匹配 (label, dimension) 对应关系
+        best_label_map = {item[1]["movie_id"]: item[2] for item in top}
 
         # ── ⑧ 补全评分 ──
         enriched = await self._enrich_with_ratings([item[1] for item in top])
@@ -137,7 +172,7 @@ class RecommendService:
         # ── ⑨ 组装响应 ──
         result = []
         for ctx in enriched:
-            result.append({
+            item = {
                 "movie_id": ctx["movie_id"],
                 "douban_id": ctx["douban_id"],
                 "title": ctx["title"],
@@ -145,7 +180,12 @@ class RecommendService:
                 "release_year": ctx.get("release_year"),
                 "score": round(ctx.get("_score", 0), 4),
                 "rating": ctx.get("rating"),
-            })
+            }
+            match_info = best_label_map.get(ctx["movie_id"])
+            if match_info:
+                label, dim = match_info
+                item["recommend_reason"] = _format_reason(dim, label)
+            result.append(item)
         return result
 
     # ═══════════════════════════════════════════════════════════
@@ -190,31 +230,52 @@ class RecommendService:
         ctx: Dict[str, Any],
         cv_map: Dict[str, float],
         user_score_map: Dict[str, Dict[str, float]],
-    ) -> float:
+    ) -> Tuple[float, Optional[tuple]]:
         """
         输入: 电影标签上下文, CV map, 用户分数查找表
-        输出: 匹配分
+        输出: (综合得分, (label, dimension) 或 None)
 
-        精准模式 (CV > threshold): 匹配分 = Σ user_tag_score[label] × confidence
+        精准模式 (CV > threshold): 匹配分 = Σ user_tag_score[label] × confidence × dim_weight
         探索模式 (CV ≤ threshold): 匹配分 = random(0,1) × dim_weight
+
+        best_label: 按 user_score × confidence 选取（不乘 dim_weight）
+                    附带维度信息，供前端生成维度感知文案。
         """
+        threshold = self._cv_threshold or 0.5
+
         total = 0.0
+        best_label: Optional[str] = None
+        best_dim: Optional[str] = None
+        best_reason_score: float = -1.0
+
         for tag in ctx.get("tags", []):
             dim = tag["dimension"]
             label = tag["label"]
+            confidence = tag.get("confidence", 1.0) or 1.0
+            w = self._dim_weight(dim)
             cv = cv_map.get(dim, 0.0)
 
-            if cv > (self._cv_threshold or 0.5):
-                # 精准模式
-                user_s = user_score_map.get(dim, {}).get(label, 0.0)
-                conf = tag.get("confidence", 1.0) or 1.0
-                total += user_s * conf
+            is_precision = cv > threshold
+            user_score = user_score_map.get(dim, {}).get(label, 0.0)
+            if is_precision:
+                score = user_score * confidence       # 精准: 不乘 w（累积时已含）
             else:
-                # 探索模式
-                total += random.random() * self._dim_weight(dim)
+                score = random.uniform(0, 1) * w      # 探索: w 控制噪音幅度
+
+            total += score
+
+            # ── 推荐理由：按 user_score × confidence 排序，不乘 dim_weight ──
+            if is_precision and user_score > 0:
+                reason_score = user_score * confidence
+                if reason_score > best_reason_score:
+                    best_reason_score = reason_score
+                    best_label = label
+                    best_dim = dim
 
         ctx["_score"] = total
-        return total
+        if best_label and best_dim:
+            return (total, (best_label, best_dim))
+        return (total, None)
 
     async def _get_candidates(self, user_id: int, limit: int) -> List[int]:
         """
@@ -259,6 +320,7 @@ class RecommendService:
                 "release_year": r["release_year"],
                 "score": 0.0,
                 "rating": float(r["rating"]) if r.get("rating") else None,
+                "recommend_reason": "热门高分佳片推荐",
             }
             for r in rows
         ]
@@ -337,7 +399,6 @@ class RecommendService:
         # ── 拼装 ──
         contexts = []
         _ALL_DIMS_SET = frozenset(_ALL_DIMS)
-        _DCN = {"overall": "整体", "plot": "剧情", "visual": "画面", "narrative": "叙事", "pacing": "节奏"}
 
         for mid in movie_ids:
             m = movies.get(mid)
