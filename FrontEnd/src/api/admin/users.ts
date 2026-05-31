@@ -24,8 +24,11 @@ export interface UserProfileTag {
 }
 
 export const adminUsersApi = {
-  list: () =>
-    client.get<{ items: AdminUser[] }>('/admin/users'),
+  list: (params?: {
+    user_id?: number; username?: string; display_name?: string;
+    is_active?: number; role?: string
+  }) =>
+    client.get<{ items: AdminUser[] }>('/admin/users', { params }),
 
   create: (data: { username: string; password: string; display_name?: string }) =>
     client.post<AdminUser>('/admin/users', data),

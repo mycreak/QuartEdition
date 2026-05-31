@@ -13,6 +13,7 @@ routes/admin/user_routes.py
 """
 
 import logging
+from typing import Optional
 
 from quart import Blueprint, request, jsonify, g
 from quart_schema import tag
@@ -32,9 +33,41 @@ def _as_error(e: ServiceError):
 @require_permission("user:manage")
 @tag(["用户管理"])
 async def list_users():
+    """
+    用户列表，支持多条件筛选。
+
+    参数:
+        user_id:      精确匹配用户ID（可选）
+        username:     模糊匹配用户名（可选）
+        display_name: 模糊匹配昵称（可选）
+        is_active:    0=禁用, 1=活跃（可选，不传=全部）
+        role:         admin=管理员, user=普通用户（可选，不传=全部）
+    """
     from services.auth_service import _get_auth_service
+
+    user_id = request.args.get("user_id", type=int)
+    username = request.args.get("username", "").strip() or None
+    display_name = request.args.get("display_name", "").strip() or None
+    is_active_raw = request.args.get("is_active")
+    role = request.args.get("role", "").strip() or None
+
+    is_active: Optional[bool] = None
+    if is_active_raw == "0":
+        is_active = False
+    elif is_active_raw == "1":
+        is_active = True
+
+    if role not in (None, "admin", "user"):
+        return jsonify({"error": "role 参数无效，可选值为 admin / user", "code": "INVALID_ROLE"}), 400
+
     svc = _get_auth_service()
-    users = [u.model_dump() for u in await svc.list_users()]
+    users = [u.model_dump() for u in await svc.list_users(
+        user_id=user_id,
+        username=username,
+        display_name=display_name,
+        is_active=is_active,
+        role=role,
+    )]
 
     # 用 LEFT JOIN + GROUP_CONCAT 一次性聚合权限，避免 page_size=99999 伪分页
     rows = await svc.db.execute_raw(

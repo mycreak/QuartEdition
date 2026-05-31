@@ -7,7 +7,7 @@ v2 — 通过 DatabaseLayerV2 统一中间层操作 MongoDB，不再直接调用
      构造函数注入 DatabaseLayerV2，读写操作走 self.db.find/update。
 
 职责：
-    读: list_reviews / list_comments  → published_only 参数一刀切管理端/用户端
+    读: list_reviews / list_comments  → comment_status 参数控制上架/下架/用户删除过滤
     改: publish_*/unpublish_*         → 上下架（内部复用 _set_published）
     写: upsert_review / upsert_comment → 爬虫 upsert
 
@@ -37,14 +37,13 @@ _MONGO_PROJECTION_REVIEWS = {
     "_id": 1, "review_id": 1,
     "movie_id": 1,             "movie_douban_id": 1,
     "title": 1, "author": 1, "date": 1, "useful_count": 1,
-    "text": 1, "is_published": 1, "crawled_at": 1,
+    "text": 1, "crawled_at": 1, "removed_by": 1,
 }
 _MONGO_PROJECTION_COMMENTS = {
     "_id": 1, "comment_id": 1,
     "movie_id": 1,             "movie_douban_id": 1,
     "author": 1, "rating": 1, "text": 1, "date": 1,
-    "useful_count": 1, "is_published": 1, "crawled_at": 1,
-    "removed_by": 1,
+    "useful_count": 1, "crawled_at": 1, "removed_by": 1,
 }
 
 
@@ -66,7 +65,7 @@ class ReviewService:
     async def list_reviews(
         self,
         movie_ids: Optional[List[int]] = None,
-        published_only: bool = False,
+        comment_status: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -75,13 +74,17 @@ class ReviewService:
 
         输入：
             movie_ids:     可选，按本地电影ID列表过滤（None=不过滤，空列表=无结果）
-            published_only: True=只返回已上架, False=全部（管理端）
+            comment_status: None=全部, "published"=已上架, "unpublished"=已下架(管理员), "removed"=用户删除
             page/page_size: 分页
         输出：(items, total)
         """
         query: Dict[str, Any] = {}
-        if published_only:
-            query["is_published"] = True
+        if comment_status == "published":
+            query["removed_by"] = {"$exists": False}
+        elif comment_status == "unpublished":
+            query["removed_by"] = "admin"
+        elif comment_status == "removed":
+            query["removed_by"] = "user"
         if movie_ids is not None:
             if len(movie_ids) == 1:
                 query["movie_id"] = movie_ids[0]
@@ -89,8 +92,8 @@ class ReviewService:
                 query["movie_id"] = {"$in": movie_ids}
 
         projection = dict(_MONGO_PROJECTION_REVIEWS)
-        if published_only:
-            projection.pop("is_published", None)
+        if comment_status == "published":
+            projection.pop("removed_by", None)
 
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
@@ -127,7 +130,7 @@ class ReviewService:
         try:
             items, total = await self.db.find(
                 table="comments",
-                conditions={"user_id": user_id, "is_published": True},
+                conditions={"user_id": user_id, "removed_by": {"$exists": False}},
                 projection={
                     "_id": 1, "movie_id": 1, "text": 1, "rating": 1, "date": 1,
                 },
@@ -148,7 +151,7 @@ class ReviewService:
         self,
         movie_ids: Optional[List[int]] = None,
         rating: Optional[float] = None,
-        published_only: bool = False,
+        comment_status: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -158,13 +161,17 @@ class ReviewService:
         输入：
             movie_ids:     可选，按本地电影ID列表过滤（None=不过滤，空列表=无结果）
             rating:        可选，按评分过滤
-            published_only: True=只返回已上架
+            comment_status: None=全部, "published"=已上架, "unpublished"=已下架(管理员), "removed"=用户删除
             page/page_size: 分页
         输出：(items, total)
         """
         query: Dict[str, Any] = {}
-        if published_only:
-            query["is_published"] = True
+        if comment_status == "published":
+            query["removed_by"] = {"$exists": False}
+        elif comment_status == "unpublished":
+            query["removed_by"] = "admin"
+        elif comment_status == "removed":
+            query["removed_by"] = "user"
         if movie_ids is not None:
             if len(movie_ids) == 1:
                 query["movie_id"] = movie_ids[0]
@@ -174,8 +181,8 @@ class ReviewService:
             query["rating"] = rating
 
         projection = dict(_MONGO_PROJECTION_COMMENTS)
-        if published_only:
-            projection.pop("is_published", None)
+        if comment_status == "published":
+            projection.pop("removed_by", None)
 
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
@@ -210,7 +217,7 @@ class ReviewService:
         if not movie_id:
             return []
         
-        query = {"movie_id": movie_id, "is_published": True}
+        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
         projection = {
             "text": 1, "useful_count": 1, "_id": 0
         }
@@ -273,7 +280,7 @@ class ReviewService:
         if not movie_id:
             return []
 
-        query = {"movie_id": movie_id, "is_published": True}
+        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
         projection = {"text": 1, "_id": 0}
 
         original_type = self.db._get_type()
@@ -328,7 +335,7 @@ class ReviewService:
         if not movie_id:
             return 0
 
-        query = {"movie_id": movie_id, "is_published": True}
+        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
         try:
@@ -408,9 +415,15 @@ class ReviewService:
                         code="USER_DELETED",
                     )
 
-            data: dict = {"is_published": published}
-            if not published:
-                data["removed_by"] = "admin"
+            if published:
+                data = {
+                    "$set": {"is_published": True},
+                    "$unset": {"removed_by": ""}
+                }
+            else:
+                data = {
+                    "$set": {"is_published": False, "removed_by": "admin"}
+                }
 
             modified = await self.db.update(
                 table=collection_name,

@@ -1,7 +1,7 @@
 <template>
   <div class="user-profile-page">
     <div class="page-header">
-      <el-button :icon="ArrowLeft" @click="router.back()">返回</el-button>
+      <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
       <h2 class="page-title">用户画像 — {{ profileUser?.display_name || profileUser?.username }}</h2>
     </div>
 
@@ -69,6 +69,21 @@ const router = useRouter()
 const route = useRoute()
 
 const TOP_N = 30
+
+/** 
+ * 返回用户画像管理页，保持 tab 状态和分页进度。
+ * 
+ * 从 UsersView → goToProfile 传入的 query 中提取 tab/page/keyword，
+ * 回传确保返回后停留在「用户画像管理」tab + 同一页。
+ */
+function goBack() {
+  const query: Record<string, string> = {}
+  const q = route.query
+  if (q.tab) query.tab = q.tab as string
+  if (q.page) query.page = q.page as string
+  if (q.keyword) query.keyword = q.keyword as string
+  router.push({ path: '/admin/users', query })
+}
 
 const profileUser = ref<AdminUser | null>(null)
 const profileData = ref<UserProfileData | null>(null)

@@ -36,7 +36,7 @@ async def list_reviews():
     svc = _get_review_service()
     items, total = await svc.list_reviews(
         movie_ids=[movie_id] if movie_id else None,
-        published_only=True,
+        comment_status="published",
         page=page,
         page_size=page_size,
     )
@@ -54,7 +54,7 @@ async def list_comments():
     svc = _get_review_service()
     items, total = await svc.list_comments(
         movie_ids=[movie_id] if movie_id else None,
-        published_only=True,
+        comment_status="published",
         page=page,
         page_size=page_size,
     )

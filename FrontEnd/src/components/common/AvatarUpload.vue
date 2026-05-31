@@ -125,9 +125,9 @@ const handleFileChange = (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
 
-  // 校验文件大小
-  if (file.size > 5 * 1024 * 1024) {
-    ElMessage.error('图片大小不能超过5MB')
+  // 校验文件大小（与后端 AVATAR_MAX_SIZE_MB=2 保持一致）
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.error('图片大小不能超过2MB')
     resetFileInput()
     return
   }
@@ -178,7 +178,7 @@ const handleConfirmCrop = async () => {
         // 关闭弹窗
         cropperVisible.value = false
       } catch (err: any) {
-        ElMessage.error(err.response?.data?.message || '上传失败')
+        ElMessage.error(err.response?.data?.error || err.response?.data?.message || '上传失败')
         emit('error', err)
       } finally {
         uploading.value = false

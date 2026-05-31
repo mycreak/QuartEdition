@@ -2,39 +2,49 @@
   <div class="admin-reviews">
     <h2 class="page-title">评论管理</h2>
 
-    <div class="toolbar">
-      <el-select
-        v-model="movieIdFilter"
-        placeholder="全部电影"
-        clearable
-        filterable
-        remote
-        remote-show-suffix
-        :remote-method="searchMovies"
-        :loading="movieOptionsLoading"
-        class="filter-select"
-        style="width: 280px"
-      >
-        <el-option v-for="m in movieOptions" :key="m.movie_id" :label="m.title" :value="m.movie_id" />
-      </el-select>
-      <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" style="width: 140px">
-        <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
-      </el-select>
-      <el-input v-model="yearFilter" placeholder="年份" clearable class="year-input" maxlength="4" @blur="onYearFilterChange" @keyup.enter="onYearFilterChange" />
-      <el-select v-model="regionFilter" placeholder="全部国家/地区" clearable class="filter-select" style="width: 150px">
-        <el-option v-for="r in allRegions" :key="r.id" :label="r.name" :value="r.id" />
-      </el-select>
-      <el-select v-model="ratingFilter" placeholder="全部评分" clearable class="filter-select" style="width: 130px">
-        <el-option label="9分及以上" value="100:90" />
-        <el-option label="8-9分" value="90:80" />
-        <el-option label="7-8分" value="80:70" />
-        <el-option label="6-7分" value="70:60" />
-        <el-option label="6分以下" value="60:0" />
-      </el-select>
-      <el-select v-model="publishedFilter" placeholder="上下架" clearable class="filter-select" style="width: 130px">
-        <el-option label="已上架" value="published" />
-        <el-option label="已下架" value="unpublished" />
-      </el-select>
+    <div class="filter-section">
+      <div class="filter-label">电影筛选</div>
+      <div class="filter-row">
+        <el-select
+          v-model="movieIdFilter"
+          placeholder="全部电影"
+          clearable
+          filterable
+          remote
+          remote-show-suffix
+          :remote-method="searchMovies"
+          :loading="movieOptionsLoading"
+          class="filter-select"
+          style="width: 280px"
+        >
+          <el-option v-for="m in movieOptions" :key="m.movie_id" :label="m.title" :value="m.movie_id" />
+        </el-select>
+        <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" style="width: 140px">
+          <el-option v-for="t in typeOptions" :key="t.type_num" :label="`${t.type_name} (${t.type_num})`" :value="t.type_num" />
+        </el-select>
+        <el-input v-model="yearFilter" placeholder="年份" clearable class="year-input" maxlength="4" @blur="onYearFilterChange" @keyup.enter="onYearFilterChange" />
+        <el-select v-model="regionFilter" placeholder="全部国家/地区" clearable class="filter-select" style="width: 150px">
+          <el-option v-for="r in allRegions" :key="r.id" :label="r.name" :value="r.id" />
+        </el-select>
+        <el-select v-model="ratingFilter" placeholder="全部评分" clearable class="filter-select" style="width: 130px">
+          <el-option label="9分及以上" value="100:90" />
+          <el-option label="8-9分" value="90:80" />
+          <el-option label="7-8分" value="80:70" />
+          <el-option label="6-7分" value="70:60" />
+          <el-option label="6分以下" value="60:0" />
+        </el-select>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-label">评论筛选</div>
+      <div class="filter-row">
+        <el-select v-model="publishedFilter" placeholder="上架状态" clearable class="filter-select" style="width: 130px">
+          <el-option label="已上架" value="published" />
+          <el-option label="已下架" value="unpublished" />
+          <el-option label="用户删除" value="removed" />
+        </el-select>
+      </div>
     </div>
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
@@ -64,14 +74,18 @@
               </el-button>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
-              <el-tag :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
+              <el-tag v-if="row.removed_by === 'user'" type="danger" size="small">用户已删除</el-tag>
+              <el-tag v-else :type="(row.is_published ?? !row.removed_by) ? 'success' : 'info'" size="small">{{ (row.is_published ?? !row.removed_by) ? '已上架' : '已下架' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleReviewPublish(row)">
+              <el-tooltip v-if="row.removed_by === 'user'" content="该评论已被用户主动删除，无法重新上架" placement="top">
+                <el-button size="small" type="success" link disabled>上架</el-button>
+              </el-tooltip>
+              <el-button v-else-if="authStore.checkPermission('comment:manage')" size="small" :type="row.is_published ? 'danger' : 'success'" link @click="toggleReviewPublish(row)">
                 {{ row.is_published ? '下架' : '上架' }}
               </el-button>
             </template>
@@ -109,7 +123,7 @@
           <el-table-column label="状态" width="110">
             <template #default="{ row }">
               <el-tag v-if="row.removed_by === 'user'" type="danger" size="small">用户已删除</el-tag>
-              <el-tag v-else :type="row.is_published ? 'success' : 'info'" size="small">{{ row.is_published ? '已上架' : '已下架' }}</el-tag>
+              <el-tag v-else :type="(row.is_published ?? !row.removed_by) ? 'success' : 'info'" size="small">{{ (row.is_published ?? !row.removed_by) ? '已上架' : '已下架' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="180" fixed="right">
@@ -267,7 +281,7 @@ async function fetchReviews(p = 1) {
     }
     if (regionFilter.value !== undefined) params.region_id = regionFilter.value
     if (ratingFilter.value) params.interval_ids = ratingFilter.value
-    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
+    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : publishedFilter.value === 'unpublished' ? 0 : -1
     const res = await adminReviewsApi.reviews(params as any)
     reviews.value = res.data.items
     revTotal.value = res.data.total
@@ -287,7 +301,7 @@ async function fetchComments(p = 1) {
     }
     if (regionFilter.value !== undefined) params.region_id = regionFilter.value
     if (ratingFilter.value) params.interval_ids = ratingFilter.value
-    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : 0
+    if (publishedFilter.value) params.published = publishedFilter.value === 'published' ? 1 : publishedFilter.value === 'unpublished' ? 0 : -1
     const res = await adminReviewsApi.comments(params as any)
     comments.value = res.data.items
     comTotal.value = res.data.total
@@ -303,18 +317,19 @@ async function toggleReviewPublish(row: AdminReview) {
   try {
     const api = row.is_published ? adminReviewsApi.unpublishReview : adminReviewsApi.publishReview
     await api(row.review_id)
-    row.is_published = !row.is_published
-    ElMessage.success(row.is_published ? '已上架' : '已下架')
-  } catch { ElMessage.error('操作失败') }
+    ElMessage.success(row.is_published ? '已下架' : '已上架')
+    await fetchReviews(revPage.value)
+  } catch (err: any) {
+    ElMessage.error(err.response?.data?.error || '操作失败')
+  }
 }
 
 async function toggleCommentPublish(row: AdminComment) {
   try {
     const api = row.is_published ? adminReviewsApi.unpublishComment : adminReviewsApi.publishComment
     await api(row.comment_id)
-    row.is_published = !row.is_published
-    row.removed_by = row.is_published ? null : 'admin'
-    ElMessage.success(row.is_published ? '已上架' : '已下架')
+    ElMessage.success(row.is_published ? '已下架' : '已上架')
+    await fetchComments(comPage.value)
   } catch (err: any) {
     ElMessage.error(err.response?.data?.error || '操作失败')
   }
@@ -346,7 +361,9 @@ onMounted(async () => {
 <style scoped>
 .admin-reviews { max-width: 1280px; }
 .page-title { font-size: 22px; color: #1a1a2e; margin: 0 0 20px; }
-.toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.filter-section { margin-bottom: 14px; }
+.filter-label { font-size: 13px; color: #909399; margin-bottom: 6px; }
+.filter-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .filter-select { width: 120px; }
 .year-input { width: 100px; }
 .paginator { margin-top: 16px; justify-content: flex-end; }

@@ -714,7 +714,7 @@ async function testCookie(row: CookieAccount) {
     } else {
       ElMessage.error(`验证失败: ${res.data.message}`)
     }
-    await fetchCookieAccounts()
+    await fetchCookieAccounts(cookiePage.value)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '验证失败')
   }
@@ -758,7 +758,7 @@ async function banAccount(row: CookieAccount) {
   try {
     await adminCookieApi.ban(row.id)
     ElMessage.success(`账号 ${row.id} 已封禁`)
-    await fetchCookieAccounts()
+    await fetchCookieAccounts(cookiePage.value)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
   }
@@ -775,7 +775,7 @@ async function unbanAccount(row: CookieAccount) {
   try {
     await adminCookieApi.unban(row.id)
     ElMessage.success(`账号 ${row.id} 已恢复`)
-    await fetchCookieAccounts()
+    await fetchCookieAccounts(cookiePage.value)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
   }
@@ -792,7 +792,7 @@ async function confirmRemoveAccount(row: CookieAccount) {
   try {
     await adminCookieApi.remove(row.id)
     ElMessage.success(`账号 ${row.id} 已删除`)
-    await fetchCookieAccounts()
+    await fetchCookieAccounts(cookiePage.value)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '删除失败')
   }
@@ -831,7 +831,7 @@ async function submitEditCookie() {
     await adminCookieApi.update(cookieEditForm.id, updateData)
     ElMessage.success('Cookie信息已更新')
     cookieEditVisible.value = false
-    await fetchCookieAccounts()
+    await fetchCookieAccounts(cookiePage.value)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || '更新失败')
   } finally { cookieEditing.value = false }

@@ -12,6 +12,7 @@ routes/user/profile_routes.py
 """
 
 import logging
+import time
 
 from quart import Blueprint, request, jsonify
 from quart_schema import tag
@@ -82,16 +83,22 @@ async def upload_avatar():
     if not public_url:
         return jsonify({"error": "上传失败，请稍后重试"}), 500
 
-    from models.user import UserUpdate
-    await svc.update_user(user_id, UserUpdate(avatar_url=public_url))
+    # 追加时间戳 query 参数防浏览器缓存
+    # TOS 的 pre_signed_url 签名基于日期粒度（YYYYMMDD），
+    # 同一自然日内签名相同，无法单独作为 cache-buster。
+    # 直接拼 ?ts= 更可靠，TOS 忽略未知 query 参数。
+    avatar_url = f"{public_url}?ts={int(time.time())}"
 
-    logger.info(f"头像上传成功: user_id={user_id} uuid={user.uuid} url={public_url}")
+    from models.user import UserUpdate
+    await svc.update_user(user_id, UserUpdate(avatar_url=avatar_url))
+
+    logger.info(f"头像上传成功: user_id={user_id} uuid={user.uuid} url={avatar_url}")
 
     return jsonify({
         "success": True,
         "message": "上传成功",
         "data": {
-            "avatar_url": public_url,
+            "avatar_url": avatar_url,
         },
     })
 
@@ -161,7 +168,10 @@ async def get_my_movies():
 
     offset = (page - 1) * page_size
     total_rows = await raw.execute_query(
-        f"SELECT COUNT(1) AS cnt FROM user_movie_status WHERE user_id=%s AND {action}=1",
+        f"""SELECT COUNT(1) AS cnt
+            FROM user_movie_status ums
+            JOIN movies m ON ums.movie_id = m.id
+            WHERE ums.user_id=%s AND ums.{action}=1 AND m.is_published=1""",
         (user_id,),
     )
     total = total_rows[0]["cnt"] if total_rows else 0
@@ -173,7 +183,7 @@ async def get_my_movies():
             JOIN movies m ON ums.movie_id = m.id
             LEFT JOIN movie_ratings mr ON m.id = mr.movie_id
             LEFT JOIN review_summary rs ON m.id = rs.movie_id
-            WHERE ums.user_id=%s AND ums.{action}=1
+            WHERE ums.user_id=%s AND ums.{action}=1 AND m.is_published=1
             ORDER BY ums.updated_at DESC
             LIMIT %s OFFSET %s""",
         (user_id, page_size, offset),
@@ -222,7 +232,7 @@ async def get_my_comments():
     review_svc = _get_review_service()
     items, total = await review_svc.get_comments_by_user_id(user_id, page=page, page_size=page_size)
 
-    # 批量补 movie 信息（title / poster_url / release_year）
+    # 批量补 movie 信息（title / poster_url / release_year），仅上架电影
     movie_ids = list(set(it["movie_id"] for it in items if it.get("movie_id")))
     movie_map: dict = {}
     if movie_ids:
@@ -230,7 +240,7 @@ async def get_my_comments():
         raw = current_app.services.db.raw_mysql()
         placeholders = ",".join(["%s"] * len(movie_ids))
         rows = await raw.execute_query(
-            f"SELECT id, title, poster_url, release_year FROM movies WHERE id IN ({placeholders})",
+            f"SELECT id, title, poster_url, release_year FROM movies WHERE id IN ({placeholders}) AND is_published=1",
             tuple(movie_ids),
         )
         movie_map = {r["id"]: r for r in rows}
@@ -246,6 +256,8 @@ async def get_my_comments():
             "date": it.get("date"),
         }
         for it in items
+        # 跳过已下架电影的评论
+        if it.get("movie_id") in movie_map
     ]
 
-    return jsonify({"items": result, "total": total, "page": page, "page_size": page_size})
+    return jsonify({"items": result, "total": len(result), "page": page, "page_size": page_size})

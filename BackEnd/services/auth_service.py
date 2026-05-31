@@ -106,9 +106,50 @@ class AuthService:
         """
         return await self.db.find_one("users", {"username": username})
 
-    async def list_users(self) -> List[UserRead]:
-        """列出所有用户（空列表 = 无用户）。"""
-        rows = await self.db.execute_raw("SELECT * FROM users")
+    async def list_users(
+        self,
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
+        display_name: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        role: Optional[str] = None,
+    ) -> List[UserRead]:
+        """
+        列出用户，支持多条件筛选。
+
+        筛选规则：
+            user_id:      精确匹配
+            username:     模糊匹配 (LIKE %...%)
+            display_name: 模糊匹配 (LIKE %...%)
+            is_active:    精确匹配 (True=活跃, False=禁用)
+            role:         "admin"=有权限, "user"=无权限
+        """
+        where = []
+        params = []
+
+        if user_id is not None:
+            where.append("id = %s")
+            params.append(user_id)
+        if username:
+            where.append("username LIKE %s")
+            params.append(f"%{username}%")
+        if display_name:
+            where.append("display_name LIKE %s")
+            params.append(f"%{display_name}%")
+        if is_active is not None:
+            where.append("is_active = %s")
+            params.append(1 if is_active else 0)
+
+        if role == "admin":
+            where.append("id IN (SELECT DISTINCT user_id FROM user_permissions)")
+        elif role == "user":
+            where.append("id NOT IN (SELECT DISTINCT user_id FROM user_permissions)")
+
+        sql = "SELECT * FROM users"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+
+        rows = await self.db.execute_raw(sql, tuple(params))
         return [UserRead(**r) for r in rows]
 
     async def update_user(self, user_id: int, data: UserUpdate) -> UserRead:
@@ -217,8 +258,13 @@ class AuthService:
         副作用：UPDATE users SET password_hash = ...
         注意：Pydantic 层已校验 new_password 复杂度（大小写字母+数字≥6位）
         """
-        user = await self.get_user(user_id)
-        if not bcrypt.checkpw(old_password.encode("utf-8"), user.password_hash.encode("utf-8")):
+        # 直接查原始行获取 password_hash
+        # 不能用 self.get_user() — 它返回 UserRead，不含密码哈希
+        row = await self.db.find_one("users", {"id": user_id})
+        if not row:
+            raise NotFoundError("用户", user_id)
+
+        if not bcrypt.checkpw(old_password.encode("utf-8"), row["password_hash"].encode("utf-8")):
             raise AuthenticationError("原密码错误")
 
         new_hash = bcrypt.hashpw(

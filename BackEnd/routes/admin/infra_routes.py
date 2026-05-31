@@ -32,7 +32,7 @@ routes/admin/infra_routes.py
 
 import logging
 
-from quart import Blueprint, jsonify, request
+from quart import Blueprint, jsonify, request, g
 from quart_schema import tag
 from utils.auth import require_permission
 from crawler.proxy import get_proxy_pool, SourceType
@@ -520,10 +520,10 @@ async def test_cookie():
 @require_permission("infra:cookie:read")
 @tag(["基础设施"])
 async def cookie_options():
-    """获取 Cookie 下拉选项列表（任务提交页用，仅 active + enabled）。"""
+    """获取 Cookie 下拉选项列表（任务提交页用，仅 active + enabled + 按 bound_admin_ids 过滤）。"""
     try:
         mgr = _get_cookie_manager()
-        return jsonify({"items": mgr.options_list()})
+        return jsonify({"items": mgr.options_list(admin_id=g.user_id)})
     except RuntimeError as e:
         return jsonify({"error": str(e), "items": []}), 200
 

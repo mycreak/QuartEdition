@@ -33,11 +33,11 @@
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="router.push(isAdminRoute ? '/admin/profile' : '/profile')">
+              <el-dropdown-item v-if="!isAdminRoute" @click="router.push('/profile')">
                 <el-icon><User /></el-icon>
                 个人中心
               </el-dropdown-item>
-              <el-dropdown-item divided @click="handleLogout">
+              <el-dropdown-item :class="{ 'is-divided': !isAdminRoute }" @click="handleLogout">
                 <el-icon><SwitchButton /></el-icon>
                 退出登录
               </el-dropdown-item>

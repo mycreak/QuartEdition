@@ -244,7 +244,12 @@
               show-word-limit
             />
             <div class="mt-3" style="text-align: right;">
-              <el-button type="primary" :loading="actionLoading === 'review'" @click="submitReview">
+              <el-button
+                type="primary"
+                :disabled="!reviewText.trim()"
+                :loading="actionLoading === 'review'"
+                @click="submitReview"
+              >
                 发布评论
               </el-button>
             </div>
@@ -375,6 +380,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { useMovieStore } from '@/stores/movies'
 import type { MovieDetail, WordCloudItem, MovieStatus } from '@/types/movie'
 import type { Review, Comment } from '@/types/review'
@@ -646,9 +652,18 @@ async function toggleAction(action: string): Promise<void> {
 async function submitReview(): Promise<void> {
   const movieId = Number(route.params.id)
   if (!movieId || !reviewText.value.trim()) return
-  actionLoading.value = 'review'
-  actionError.value = ''
   try {
+    await ElMessageBox.confirm(
+      '确定要提交这条评论吗？提交后将无法修改，只能删除。',
+      '确认提交',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    actionLoading.value = 'review'
+    actionError.value = ''
     await userActionApi.comment(movieId, {
       review_text: reviewText.value.trim(),
       rating: reviewRating.value || undefined,
@@ -660,7 +675,9 @@ async function submitReview(): Promise<void> {
     // 刷新短评列表，让用户看到刚发的评论
     fetchComments(1)
   } catch (err: any) {
-    actionError.value = err.response?.data?.error || '评论失败，请稍后重试'
+    if (err !== 'cancel') {
+      actionError.value = err.response?.data?.error || '评论失败，请稍后重试'
+    }
   } finally {
     actionLoading.value = null
   }

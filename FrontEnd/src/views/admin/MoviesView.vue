@@ -147,10 +147,10 @@
       <!-- 片单管理 tab -->
       <el-tab-pane label="片单管理" name="playlists">
         <div class="toolbar">
-          <el-input v-model="playlistSearch" placeholder="搜索片单标题..." clearable class="search-input" @keyup.enter="fetchPlaylists" @clear="fetchPlaylists" />
+          <el-input v-model="playlistSearch" placeholder="搜索片单标题..." clearable class="search-input" @keyup.enter="fetchPlaylists" @blur="fetchPlaylists" @clear="fetchPlaylists" />
           <el-select v-model="playlistPublishedFilter" placeholder="上下架" clearable class="filter-select" @change="fetchPlaylists">
-            <el-option label="已发布" :value="1" />
-            <el-option label="未发布" :value="0" />
+            <el-option label="已上架" :value="1" />
+            <el-option label="未上架" :value="0" />
           </el-select>
           <el-date-picker
             v-model="playlistDateRange"
@@ -165,7 +165,7 @@
           <el-button type="primary" @click="openPlaylistCreate">新建片单</el-button>
         </div>
 
-        <el-table :data="playlistItems" stripe v-loading="playlistLoading">
+        <el-table :data="pagedPlaylistItems" stripe v-loading="playlistLoading">
           <el-table-column prop="id" label="ID" width="60" />
           <el-table-column prop="title" label="标题" min-width="160" />
           <el-table-column label="封面" width="80">
@@ -181,7 +181,7 @@
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
               <el-tag :type="row.is_published ? 'success' : 'info'" size="small">
-                {{ row.is_published ? '已发布' : '未发布' }}
+                {{ row.is_published ? '已上架' : '未上架' }}
               </el-tag>
             </template>
           </el-table-column>
@@ -194,15 +194,23 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="260" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button size="small" type="primary" link @click="openPlaylistEdit(row)">编辑</el-button>
-              <el-button v-if="!row.is_published" size="small" type="success" link @click="handlePlaylistPublish(row)">发布</el-button>
+              <el-button v-if="!row.is_published" size="small" type="success" link @click="handlePlaylistPublish(row)">上架</el-button>
               <el-button v-else size="small" type="warning" link @click="handlePlaylistUnpublish(row)">下架</el-button>
-              <el-button size="small" type="danger" link @click="handlePlaylistDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
+
+        <el-pagination
+          class="paginator"
+          v-model:current-page="playlistPage"
+          :total="playlistTotal"
+          :page-size="playlistPageSize"
+          background
+          layout="total, prev, pager, next"
+        />
       </el-tab-pane>
     </el-tabs>
 
@@ -395,7 +403,7 @@
           <el-date-picker
             v-model="playlistForm.publish_at"
             type="datetime"
-            placeholder="上架时间（可选，留空=手动发布）"
+            placeholder="上架时间（可选，留空=手动上架）"
             format="YYYY-MM-DD HH:mm:ss"
             value-format="YYYY-MM-DDTHH:mm:ss"
           />
@@ -421,7 +429,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -725,6 +733,14 @@ const playlistLoading = ref(false)
 const playlistPublishedFilter = ref<number | undefined>(undefined)
 const playlistSearch = ref('')
 const playlistDateRange = ref<[string, string] | null>(null)
+const playlistPage = ref(1)
+const playlistPageSize = ref(20)
+
+const playlistTotal = computed(() => playlistItems.value.length)
+const pagedPlaylistItems = computed(() => {
+  const start = (playlistPage.value - 1) * playlistPageSize.value
+  return playlistItems.value.slice(start, start + playlistPageSize.value)
+})
 const playlistDialogVisible = ref(false)
 const playlistEditId = ref<number | null>(null)
 const playlistSaving = ref(false)
@@ -766,6 +782,7 @@ function removeMovieId(idx: number) {
 
 async function fetchPlaylists() {
   playlistLoading.value = true
+  playlistPage.value = 1
   try {
     const res = await adminPlaylistApi.list({
       keyword: playlistSearch.value || undefined,
@@ -824,8 +841,8 @@ async function handlePlaylistPublish(row: PlaylistFull) {
   try {
     await adminPlaylistApi.publish(row.id)
     row.is_published = 1
-    ElMessage.success('已发布')
-  } catch { ElMessage.error('发布失败') }
+    ElMessage.success('已上架')
+  } catch { ElMessage.error('上架失败') }
 }
 
 async function handlePlaylistUnpublish(row: PlaylistFull) {

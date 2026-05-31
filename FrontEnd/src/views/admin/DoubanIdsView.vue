@@ -48,11 +48,12 @@
           {{ row.claimed_by_name || '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button v-if="!row.is_acquired && !row.is_scraped" size="small" type="primary" link @click="acquire(row)">认领</el-button>
           <el-button v-else-if="row.is_acquired && !row.is_scraped && row.admin_id === currentUserId" size="small" type="warning" link @click="release(row)">释放</el-button>
-          <span v-else class="text-muted">—</span>
+          <el-button v-if="row.source === 'manual'" size="small" type="danger" link @click="remove(row)">删除</el-button>
+          <span v-if="row.source !== 'manual' && row.is_acquired && (row.is_scraped || row.admin_id !== currentUserId)" class="text-muted">—</span>
         </template>
       </el-table-column>
     </el-table>
@@ -224,6 +225,27 @@ async function release(row: DoubanId) {
       ElMessage.warning('释放失败 — 不是你认领的或已被释放')
     } else {
       ElMessage.error(e?.response?.data?.error || '释放失败')
+    }
+  }
+}
+
+async function remove(row: DoubanId) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除豆瓣 ID ${row.douban_id}「${row.title}」吗？删除后不可恢复。`,
+      '确认删除',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  try {
+    await adminDoubanIdsApi.delete(row.douban_id)
+    ElMessage.success(`已删除 ${row.douban_id}`)
+    await fetchList(page.value)
+  } catch (e: any) {
+    if (e?.response?.status === 409) {
+      ElMessage.warning('删除失败 — 不是手动添加或已爬取完成')
+    } else {
+      ElMessage.error(e?.response?.data?.error || '删除失败')
     }
   }
 }

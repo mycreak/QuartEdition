@@ -225,6 +225,7 @@ class ProxyPool:
             proxy = Proxy(
                 host=host,
                 port=port,
+                id=_next_proxy_id(),
                 status=ProxyStatus.UNKNOWN,
                 username=item.get("username", ""),
                 password=item.get("password", ""),
@@ -354,9 +355,7 @@ class ProxyPool:
 
     def options_list(self) -> list[dict]:
         """
-        供管理端下拉选择器使用的精简列表（仅 alive 代理）。
-
-        输出：[{id, key, label, has_auth, region}, ...]
+        供管理端下拉选择器使用的精简列表（仅 alive + enabled 代理）。
         """
         return [
             {
@@ -367,6 +366,7 @@ class ProxyPool:
                 "region": p.region,
             }
             for p in self._alive
+            if p.enabled
         ]
 
     async def update_proxy(self, proxy_id: int, **kwargs) -> bool:
@@ -434,10 +434,14 @@ class ProxyPool:
         async with self._lock:
             if not self._alive:
                 return None
-            proxy = self._alive.pop(0)
-            self._alive.append(proxy)
-            proxy.last_used = time.time()
-            return proxy
+            # 跳过已禁用的代理（最多重试一圈避免死循环）
+            for _ in range(len(self._alive)):
+                proxy = self._alive.pop(0)
+                self._alive.append(proxy)
+                if proxy.enabled:
+                    proxy.last_used = time.time()
+                    return proxy
+            return None
 
     def get_stats(self) -> dict:
         """

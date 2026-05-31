@@ -8,10 +8,11 @@ routes/admin/douban_id_routes.py
     POST   /admin/douban-ids              手动添加 ID（type_num + interval_id 必填）
     POST   /admin/douban-ids/<id>/acquire  认领（原子，先到先得）
     POST   /admin/douban-ids/<id>/release  释放（限本人操作，非本人释放返回 409）
+    DELETE /admin/douban-ids/<id>          删除手动添加的 ID（仅限 source=manual 且未爬取）
 
 权限：
     读: crawler:task:read
-    写/认领: crawler:task:write
+    写/认领/释放/删除: crawler:task:write
 """
 
 import logging
@@ -244,4 +245,30 @@ async def release_douban_id(id: str):
         return jsonify({
             "error": "释放失败 — ID 不存在、未被认领、不是你认领的、或已爬取完成",
             "code": "RELEASE_CONFLICT",
+        }), 409
+
+
+@douban_id_bp.route("/douban-ids/<id>", methods=["DELETE"])
+@require_permission("crawler:task:write")
+@tag(["douban_id"])
+async def delete_douban_id(id: str):
+    """
+    删除手动添加的豆瓣电影 ID（仅限 source=manual 且未爬取）。
+    """
+    from quart import current_app
+    db = current_app.services.db
+
+    affected = await db.raw_mysql().execute_update(
+        "DELETE FROM douban_ids "
+        "WHERE douban_id=%s AND source='manual' AND is_scraped=0",
+        (id,),
+    )
+
+    if affected:
+        logger.info(f"手动删除 douban_id: {id} admin_id={g.user_id}")
+        return jsonify({"success": True, "douban_id": id, "message": "已删除"})
+    else:
+        return jsonify({
+            "error": "删除失败 — ID 不存在、不是手动添加、或已爬取完成",
+            "code": "DELETE_CONFLICT",
         }), 409

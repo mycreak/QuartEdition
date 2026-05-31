@@ -189,6 +189,7 @@ class TaskHistoryService:
         admin_id: Optional[int] = None,
         task_type: Optional[str] = None,
         status: Optional[str] = None,
+        douban_id: Optional[str] = None,
         keyword: Optional[str] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
@@ -217,6 +218,9 @@ class TaskHistoryService:
         else:
             where.append("th.status = %s")
             params.append(status)
+        if douban_id:
+            where.append("JSON_EXTRACT(th.task_params, '$.douban_id') = %s")
+            params.append(douban_id)
         if keyword:
             where.append("th.task_params LIKE %s")
             params.append(f"%{keyword}%")

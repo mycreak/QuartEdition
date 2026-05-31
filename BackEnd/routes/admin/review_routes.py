@@ -92,6 +92,8 @@ async def _resolve_movie_ids_by_filters(
         params.append(region_id)
 
     if interval_ids:
+        or_parts = []
+        params_for_interval = []
         for part in interval_ids.split(","):
             part = part.strip()
             if ":" not in part:
@@ -100,12 +102,15 @@ async def _resolve_movie_ids_by_filters(
             try:
                 high = float(high_str) / 10
                 low = float(low_str) / 10
-                where_clauses.append(
-                    "(m.rating_avg >= %s AND m.rating_avg < %s)"
-                )
-                params.extend([low, high])
+                or_parts.append("(mr.average >= %s AND mr.average <= %s)")
+                params_for_interval.extend([low, high])
             except ValueError:
                 logger.debug(f"跳过无效评分区间: {part}")
+        if or_parts:
+            where_clauses.append(
+                f"m.id IN (SELECT mr.movie_id FROM movie_ratings mr WHERE {' OR '.join(or_parts)})"
+            )
+            params.extend(params_for_interval)
 
     if release_year is not None:
         where_clauses.append("m.release_year = %s")
@@ -141,13 +146,21 @@ async def list_reviews():
     if resolved_ids is not None and len(resolved_ids) == 0:
         return jsonify({"items": [], "page": page, "page_size": page_size, "total": 0})
 
+    # ② 评论状态映射: 1=已上架, 0=已下架(管理员), -1=用户删除
+    status_map = {1: "published", 0: "unpublished", -1: "removed"}
+    comment_status = status_map.get(published) if published is not None else None
+
     svc = _get_review_service()
     items, total = await svc.list_reviews(
         movie_ids=resolved_ids,
-        published_only=bool(published) if published is not None else False,
+        comment_status=comment_status,
         page=page,
         page_size=page_size,
     )
+    # 补充is_published字段
+    for item in items:
+        removed_by = item.get("removed_by")
+        item["is_published"] = not bool(removed_by)
     return jsonify({"items": items, "page": page, "page_size": page_size, "total": total})
 
 
@@ -176,14 +189,22 @@ async def list_comments():
     if resolved_ids is not None and len(resolved_ids) == 0:
         return jsonify({"items": [], "page": page, "page_size": page_size, "total": 0})
 
+    # ② 评论状态映射: 1=已上架, 0=已下架(管理员), -1=用户删除
+    status_map = {1: "published", 0: "unpublished", -1: "removed"}
+    comment_status = status_map.get(published) if published is not None else None
+
     svc = _get_review_service()
     items, total = await svc.list_comments(
         movie_ids=resolved_ids,
         rating=rating,
-        published_only=bool(published) if published is not None and published != -1 else False,
+        comment_status=comment_status,
         page=page,
         page_size=page_size,
     )
+    # 补充is_published字段
+    for item in items:
+        removed_by = item.get("removed_by")
+        item["is_published"] = not bool(removed_by)
     return jsonify({"items": items, "page": page, "page_size": page_size, "total": total})
 
 

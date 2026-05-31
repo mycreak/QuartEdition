@@ -209,11 +209,16 @@
 
     <!-- ═══════ 编辑基本信息弹窗 ═══════ -->
     <el-dialog v-model="editBasicVisible" title="编辑电影信息" width="480px">
-      <el-form :model="editBasicForm" label-position="top">
-          <el-form-item label="片名"><el-input v-model="editBasicForm.title" /></el-form-item>
-          <el-form-item label="豆瓣 ID"><el-input :value="detail?.movie?.douban_id || '—'" disabled /></el-form-item>
-          <el-form-item label="上映年份"><el-input v-model="editBasicForm.release_year" placeholder="请输入上映年份" maxlength="4" style="width:100%" /></el-form-item>
-        
+      <el-form ref="editBasicFormRef" :model="editBasicForm" :rules="editBasicRules" label-position="top">
+          <el-form-item label="片名" prop="title">
+            <el-input v-model="editBasicForm.title" placeholder="请输入片名" />
+          </el-form-item>
+          <el-form-item label="豆瓣 ID">
+            <el-input :value="detail?.movie?.douban_id || '—'" disabled />
+          </el-form-item>
+          <el-form-item label="上映年份" prop="release_year">
+            <el-input v-model="editBasicForm.release_year" placeholder="请输入上映年份" maxlength="4" />
+          </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editBasicVisible = false">取消</el-button>
@@ -308,6 +313,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import client from '@/api/client'
 import { adminMoviesApi } from '@/api/admin/movies'
@@ -383,7 +389,30 @@ const localCommentCount = ref(0)
 /* ── 编辑基本信息 ── */
 const editBasicVisible = ref(false)
 const editBasicSaving = ref(false)
-const editBasicForm = ref({ title: '', release_year: undefined as number | undefined })
+const editBasicFormRef = ref<FormInstance | null>(null)
+const editBasicForm = ref({ title: '', release_year: '' })
+
+const editBasicRules: FormRules = {
+  title: [
+    { required: true, message: '请输入片名', trigger: 'blur' },
+  ],
+  release_year: [
+    { required: true, message: '请输入上映年份', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        const num = Number(value)
+        if (isNaN(num) || num < 0 || !Number.isInteger(num)) {
+          callback(new Error('上映年份必须为有效整数'))
+        } else if (num > 2100) {
+          callback(new Error('上映年份不能超过2100年'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur',
+    },
+  ],
+}
 
 /* ── 海报上传裁剪 ── */
   const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -620,7 +649,7 @@ function openEditBasic() {
   const m = detail.value?.movie
   editBasicForm.value = {
     title: m?.title || '',
-    release_year: m?.release_year
+    release_year: m?.release_year != null ? String(m.release_year) : '',
   }
   editBasicVisible.value = true
 }
@@ -628,6 +657,8 @@ function openEditBasic() {
 async function submitEditBasic() {
   if (!detail.value?.movie) return
 
+  const valid = await editBasicFormRef.value?.validate().catch(() => false)
+  if (!valid) return
 
   editBasicSaving.value = true
   try {
@@ -635,9 +666,12 @@ async function submitEditBasic() {
       ElMessage.error('无效的电影ID')
       return
     }
+    const releaseYear = editBasicForm.value.release_year
+      ? Number(editBasicForm.value.release_year)
+      : undefined
     const res = await adminMoviesApi.update(movieId, {
-      title: editBasicForm.value.title || undefined,
-      release_year: editBasicForm.value.release_year,
+      title: editBasicForm.value.title,
+      release_year: releaseYear,
     })
     if (res.data.movie && detail.value) {
       detail.value.movie = res.data.movie

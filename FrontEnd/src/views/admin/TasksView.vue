@@ -287,7 +287,38 @@
 
       <el-tab-pane label="历史" name="history">
         <div class="toolbar">
-          <el-select v-model="histStatus" placeholder="状态" @change="fetchHistory(1)">
+          <el-input
+              v-model="histDoubanId"
+              placeholder="豆瓣电影 ID"
+              clearable
+              style="width: 180px"
+              @clear="fetchHistory(1)"
+              @keyup.enter="fetchHistory(1)"
+              @blur="fetchHistory(1)"
+            />
+          <el-select
+              v-model="histTaskType"
+              placeholder="任务类型"
+              clearable
+              style="width: 160px; margin-left: 12px"
+              @change="fetchHistory(1)"
+            >
+              <el-option label="电影抓取(榜单)" value="movie_crawl" />
+              <el-option label="长评列表抓取" value="review_crawl" />
+              <el-option label="短评抓取" value="comment_crawl" />
+              <el-option label="长评正文抓取" value="review_body_crawl" />
+              <el-option label="电影详情爬取" value="movie_scrape_task" />
+              <el-option label="参演职员爬取" value="director_crawl" />
+              <el-option label="AI评论总结" value="ai_review_summary" />
+              <el-option label="AI词云生成" value="ai_wordcloud" />
+            </el-select>
+          <el-select
+            v-model="histStatus"
+            placeholder="状态"
+            clearable
+            style="width: 130px; margin-left: 12px"
+            @change="fetchHistory(1)"
+          >
             <el-option label="全部" value="" />
             <el-option label="已完成" value="done" />
             <el-option label="失败" value="failed" />
@@ -409,6 +440,8 @@ const submitting = ref(false)
 const crawlProgressType = ref<number | undefined>(undefined)
 const crawlProgressInterval = ref('')
 const histStatus = ref('')
+const histTaskType = ref('')
+const histDoubanId = ref('')
 
 const taskForm = reactive({ 
   type: '',
@@ -621,7 +654,7 @@ async function fetchQueue() {
 async function fetchProgress() {
   progressLoading.value = true
   try {
-    const params: { type_num?: number; interval_id?: string; page_size: number } = { page_size: 100 }
+    const params: { type_num?: number; interval_id?: string; page_size: number; hide_empty: boolean } = { page_size: 20, hide_empty: true }
     if (crawlProgressType.value) params.type_num = crawlProgressType.value
     if (crawlProgressInterval.value) params.interval_id = crawlProgressInterval.value
     const res = await adminTasksApi.list(params)
@@ -658,6 +691,8 @@ async function fetchHistory(p = 1) {
   try {
     const params: Record<string, unknown> = { page: p, page_size: histPageSize.value }
     if (histStatus.value) params.status = histStatus.value
+    if (histTaskType.value) params.task_type = histTaskType.value
+    if (histDoubanId.value.trim()) params.douban_id = histDoubanId.value.trim()
     const res = await adminTaskHistoryApi.list(params as any)
     histories.value = res.data.items
     histTotal.value = res.data.total

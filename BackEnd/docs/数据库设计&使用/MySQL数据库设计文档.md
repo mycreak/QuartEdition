@@ -623,7 +623,7 @@ CREATE TABLE config_score_weight (
 |:----:|------|:------:|:------------:|
 | 1 | `db_init/mysql/init.sql` | 22 张基础表 | — |
 | 2 | `add_avatar_column.py` | — | `users.avatar_url` |
-| 3 | `add_regions_name_unique.sql` | — | `regions.uk_regions_name` |
+| 3 | `migrate_regions_unique_name.sql` | — | `regions.uk_regions_name` |
 | 4 | `migrate_add_ids_fetched.sql` | — | `crawl_progress.ids_fetched` |
 | 5 | `drop_task_history_fk.sql` | — | 移除 `fk_th_admin` 外键 |
 | 6 | `create_review_summary_table.sql` | `review_summary` | — |

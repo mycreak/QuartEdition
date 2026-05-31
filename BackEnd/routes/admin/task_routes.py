@@ -247,6 +247,7 @@ async def list_tasks():
         interval_id: 评分区间（可选，如 "100:90"）
         page:        页码（默认 1）
         page_size:   每页条数（默认 100）
+        hide_empty:  隐藏进度为0的空条目（可选，true/false，默认 false）
 
     返回字段：
         crawled_count  — douban_ids 去重计数（该类型+区间已入库的独立 douban_id 数量）
@@ -264,6 +265,7 @@ async def list_tasks():
     interval_id = request.args.get("interval_id", "").strip()
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 100, type=int)
+    hide_empty = request.args.get("hide_empty", "false").lower() == "true"
 
     from quart import current_app
     db = current_app.services.db
@@ -277,9 +279,24 @@ async def list_tasks():
     if interval_id:
         where_clauses.append("cp.interval_id = %s")
         params.append(interval_id)
+    if hide_empty:
+        where_clauses.append("(agg.crawled_count > 0 OR agg.scraped_count > 0 OR agg.completed_count > 0)")
     where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) AS total FROM crawl_progress cp {where}"
+    join_sql = (
+        "LEFT JOIN ("
+        "  SELECT di.type_num, di.interval_id, "
+        "    COUNT(DISTINCT di.douban_id) AS crawled_count, "
+        "    COUNT(DISTINCT m.id) AS scraped_count, "
+        "    COUNT(DISTINCT CASE WHEN mc.movie_id IS NOT NULL THEN m.id END) AS completed_count "
+        "  FROM douban_ids di "
+        "  LEFT JOIN movies m ON di.douban_id = m.douban_id "
+        "  LEFT JOIN movie_credits mc ON m.id = mc.movie_id "
+        "  GROUP BY di.type_num, di.interval_id"
+        ") agg ON cp.type_num = agg.type_num AND cp.interval_id = agg.interval_id"
+    )
+
+    count_sql = f"SELECT COUNT(*) AS total FROM crawl_progress cp {join_sql} {where}"
     count_rows = await raw.execute_query(count_sql, tuple(params))
     total = count_rows[0]["total"] if count_rows else 0
 
@@ -290,16 +307,7 @@ async def list_tasks():
         "  COALESCE(agg.scraped_count, 0) AS scraped_count, "
         "  COALESCE(agg.completed_count, 0) AS completed_count "
         "FROM crawl_progress cp "
-        "LEFT JOIN ("
-        "  SELECT di.type_num, di.interval_id, "
-        "    COUNT(DISTINCT di.douban_id) AS crawled_count, "
-        "    COUNT(DISTINCT m.id) AS scraped_count, "
-        "    COUNT(DISTINCT CASE WHEN mc.movie_id IS NOT NULL THEN m.id END) AS completed_count "
-        "  FROM douban_ids di "
-        "  LEFT JOIN movies m ON di.douban_id = m.douban_id "
-        "  LEFT JOIN movie_credits mc ON m.id = mc.movie_id "
-        "  GROUP BY di.type_num, di.interval_id"
-        f") agg ON cp.type_num = agg.type_num AND cp.interval_id = agg.interval_id "
+        f"{join_sql} "
         f"{where} "
         "ORDER BY cp.type_num ASC LIMIT %s OFFSET %s"
     )

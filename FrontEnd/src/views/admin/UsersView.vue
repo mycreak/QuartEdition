@@ -5,6 +5,56 @@
     <el-tabs v-model="activeTab" class="users-tabs" @tab-change="handleTabChange">
       <!-- ═══════ 用户权限管理 Tab ═══════ -->
       <el-tab-pane label="用户权限管理" name="perms">
+        <div class="toolbar filter-toolbar">
+          <el-input
+            v-model="filter.userId"
+            placeholder="用户ID"
+            clearable
+            class="filter-input-sm"
+            @clear="fetchUsers"
+            @keyup.enter="fetchUsers"
+            @blur="fetchUsers"
+          />
+          <el-input
+            v-model="filter.username"
+            placeholder="用户名"
+            clearable
+            class="filter-input"
+            @clear="fetchUsers"
+            @keyup.enter="fetchUsers"
+            @blur="fetchUsers"
+          />
+          <el-input
+            v-model="filter.displayName"
+            placeholder="昵称"
+            clearable
+            class="filter-input"
+            @clear="fetchUsers"
+            @keyup.enter="fetchUsers"
+            @blur="fetchUsers"
+          />
+          <el-select
+            v-model="filter.status"
+            placeholder="状态"
+            clearable
+            class="filter-select"
+            @change="fetchUsers"
+          >
+            <el-option label="活跃" value="1" />
+            <el-option label="禁用" value="0" />
+          </el-select>
+          <el-select
+            v-model="filter.role"
+            placeholder="角色"
+            clearable
+            class="filter-select"
+            @change="fetchUsers"
+          >
+            <el-option label="管理员" value="admin" />
+            <el-option label="用户" value="user" />
+          </el-select>
+        </div>
+
         <el-button type="primary" @click="openCreate" class="create-btn">创建用户</el-button>
 
         <el-table :data="pagedUsers" stripe v-loading="loading">
@@ -135,7 +185,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { PERMISSION_CODES, PERMISSION_DESCRIPTIONS } from '@/utils/permission'
@@ -144,6 +194,7 @@ import { adminUsersApi, type AdminUser } from '@/api/admin/users'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const allPerms = PERMISSION_CODES.filter(code => !code.startsWith('infra:'))
 
@@ -151,6 +202,15 @@ const allPerms = PERMISSION_CODES.filter(code => !code.startsWith('infra:'))
 const users = ref<AdminUser[]>([])
 const loading = ref(false)
 const activeTab = ref('perms')
+
+// ── 筛选条件 ──
+const filter = reactive({
+  userId: '',
+  username: '',
+  displayName: '',
+  status: '' as string,
+  role: '' as string,
+})
 
 // ── 权限管理 Tab ──
 const page = ref(1)
@@ -209,7 +269,14 @@ const pagedFilteredUsers = computed(() => {
 async function fetchUsers() {
   loading.value = true
   try {
-    const res = await adminUsersApi.list()
+    const params: Record<string, unknown> = {}
+    const uid = Number(filter.userId)
+    if (filter.userId && !isNaN(uid)) params.user_id = uid
+    if (filter.username.trim()) params.username = filter.username.trim()
+    if (filter.displayName.trim()) params.display_name = filter.displayName.trim()
+    if (filter.status) params.is_active = Number(filter.status)
+    if (filter.role) params.role = filter.role
+    const res = await adminUsersApi.list(params as any)
     users.value = res.data.items
   } catch {
     ElMessage.error('加载用户列表失败')
@@ -225,7 +292,14 @@ function handleTabChange(name: string | number) {
 }
 
 function goToProfile(user: AdminUser) {
-  router.push(`/admin/users/${user.id}/profile`)
+  const query: Record<string, string> = {
+    tab: activeTab.value,
+    page: String(profilePage.value),
+  }
+  if (profileKeyword.value) {
+    query.keyword = profileKeyword.value
+  }
+  router.push({ path: `/admin/users/${user.id}/profile`, query })
 }
 
 // ── 权限管理 ──
@@ -350,7 +424,20 @@ async function confirmEnable(user: AdminUser) {
   }
 }
 
-onMounted(() => fetchUsers())
+onMounted(() => {
+  // 从 URL 恢复 tab 状态和分页进度（从用户画像页返回时保持上下文）
+  const q = route.query
+  if (q.tab === 'profile') {
+    activeTab.value = 'profile'
+  }
+  if (q.page) {
+    profilePage.value = parseInt(q.page as string) || 1
+  }
+  if (q.keyword) {
+    profileKeyword.value = q.keyword as string
+  }
+  fetchUsers()
+})
 </script>
 
 <style scoped>
@@ -367,4 +454,8 @@ onMounted(() => fetchUsers())
 /* 工具栏 */
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
 .search-input { width: 280px; }
+.filter-toolbar { margin-bottom: 12px; }
+.filter-input-sm { width: 100px; }
+.filter-input { width: 160px; }
+.filter-select { width: 100px; }
 </style>

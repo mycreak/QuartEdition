@@ -53,6 +53,7 @@ async def list_movies():
     release_year = request.args.get("release_year", type=int)
     region_id = request.args.get("region_id", type=int)
     douban_id = request.args.get("douban_id", "").strip()
+    interval_ids = request.args.get("interval_ids", "").strip()
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 20, type=int)
 
@@ -64,6 +65,7 @@ async def list_movies():
         release_year=release_year,
         region_id=region_id,
         douban_id=douban_id,
+        interval_ids=interval_ids,
         page=page,
         page_size=page_size,
     )
@@ -235,6 +237,30 @@ async def remove_credit(movie_id: int):
     """
     from quart import current_app
 
+    try:
+        body = await request.get_json()
+        person_id = body.get("person_id")
+        role_type = (body.get("role_type") or "").strip()
+    except Exception:
+        return jsonify({"error": "请求格式错误"}), 400
+
+    if not person_id:
+        return jsonify({"error": "person_id 不能为空"}), 400
+    if role_type not in _VALID_ROLES:
+        return jsonify({
+            "error": f"role_type 无效: {role_type}，合法值为 {sorted(_VALID_ROLES)}",
+        }), 400
+
+    result = await current_app.services.movie_service.remove_credit(
+        movie_id, int(person_id), role_type, changed_by=str(g.user_id),
+    )
+
+    if result == 0:
+        return jsonify({"error": "关联不存在", "code": "NOT_FOUND"}), 404
+
+    logger.info(f"演职人员已移除: movie_id={movie_id} person_id={person_id} role={role_type}")
+    return jsonify({"success": True, "affected": result})
+
 
 # ═══════════════════════════════════════
 # 重名人员管理
@@ -332,30 +358,6 @@ async def merge_person():
 
     logger.info(f"人员合并成功: keep_id={req.keep_person_id} discard_id={req.discard_person_id} admin_id={g.user_id}")
     return jsonify({"success": True, "message": "合并成功"})
-
-    try:
-        body = await request.get_json()
-        person_id = body.get("person_id")
-        role_type = (body.get("role_type") or "").strip()
-    except Exception:
-        return jsonify({"error": "请求格式错误"}), 400
-
-    if not person_id:
-        return jsonify({"error": "person_id 不能为空"}), 400
-    if role_type not in _VALID_ROLES:
-        return jsonify({
-            "error": f"role_type 无效: {role_type}，合法值为 {sorted(_VALID_ROLES)}",
-        }), 400
-
-    result = await current_app.services.movie_service.remove_credit(
-        movie_id, int(person_id), role_type, changed_by=str(g.user_id),
-    )
-
-    if result == 0:
-        return jsonify({"error": "关联不存在", "code": "NOT_FOUND"}), 404
-
-    logger.info(f"演职人员已移除: movie_id={movie_id} person_id={person_id} role={role_type}")
-    return jsonify({"success": True, "affected": result})
 
 
 # ═══════════════════════════════════════

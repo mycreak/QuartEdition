@@ -4,7 +4,7 @@ import type { TaskSubmit, TaskSubmitResponse } from '@/types/task'
 export const adminTasksApi = {
   submit: (data: TaskSubmit) => client.post<TaskSubmitResponse>('/admin/tasks', data),
 
-  list: (params: { type_num?: number; interval_id?: string; page?: number; page_size?: number }) =>
+  list: (params: { type_num?: number; interval_id?: string; page?: number; page_size?: number; hide_empty?: boolean }) =>
     client.get<{ items: Array<Record<string, unknown>>; page: number; page_size: number; total: number }>('/admin/tasks', { params }),
 }
 
@@ -33,7 +33,7 @@ export interface TaskHistoryDetail extends TaskHistory {
 
 export const adminTaskHistoryApi = {
   list: (params: {
-    admin_id?: number; task_type?: string; status?: string; keyword?: string;
+    admin_id?: number; task_type?: string; status?: string; douban_id?: string; keyword?: string;
     since?: string; until?: string; page?: number; page_size?: number
   }) =>
     client.get<{ items: TaskHistory[]; total: number; page: number; page_size: number }>('/admin/task-history', { params }),

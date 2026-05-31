@@ -22,13 +22,14 @@ async def list_history():
     """
     分页查询任务历史。
 
-    参数: admin_id, task_type, status, keyword, since, until, page, page_size
+    参数: admin_id, task_type, status, douban_id, keyword, since, until, page, page_size
     """
     from services.task_history_service import _get_history_service
 
     admin_id = request.args.get("admin_id", type=int)
     task_type = request.args.get("task_type")
     status = request.args.get("status")
+    douban_id = request.args.get("douban_id", "").strip()
     keyword = request.args.get("keyword")
     since = request.args.get("since")
     until = request.args.get("until")
@@ -40,6 +41,7 @@ async def list_history():
         admin_id=admin_id,
         task_type=task_type,
         status=status,
+        douban_id=douban_id or None,
         keyword=keyword,
         since=since,
         until=until,

@@ -323,22 +323,28 @@ class CookieManager:
             for a in self._accounts.values()
         ]
 
-    def options_list(self) -> list[dict]:
+    def options_list(self, admin_id: Optional[int] = None) -> list[dict]:
         """
         供管理端下拉选择器使用的精简列表（仅 active + enabled 账号）。
 
+        admin_id: 当前管理员 ID，用于根据 bound_admin_ids 过滤
+                  空列表 = 所有管理员可用（全局 Cookie）
+                  非空 = 仅列表中的管理员可见
         输出：[{id, label, platform, allowed_regions}, ...]
         """
-        return [
-            {
+        result = []
+        for a in self._accounts.values():
+            if not a.state == "active" or not a.enabled:
+                continue
+            if admin_id is not None and a.bound_admin_ids and admin_id not in a.bound_admin_ids:
+                continue
+            result.append({
                 "id": a.id,
                 "label": a.label,
                 "platform": a.platform,
                 "allowed_regions": a.allowed_regions,
-            }
-            for a in self._accounts.values()
-            if a.state == "active" and a.enabled
-        ]
+            })
+        return result
 
     # ── 增删改 ──
 

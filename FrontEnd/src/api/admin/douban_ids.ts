@@ -32,4 +32,7 @@ export const adminDoubanIdsApi = {
 
   release: (doubanId: string) =>
     client.post<{ success: boolean; douban_id: string; message: string }>(`/admin/douban-ids/${doubanId}/release`),
+
+  delete: (doubanId: string) =>
+    client.delete<{ success: boolean; douban_id: string; message: string }>(`/admin/douban-ids/${doubanId}`),
 }
