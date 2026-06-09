@@ -5,7 +5,7 @@
     <el-tabs v-model="activeTab">
       <!-- ═══════ 代理管理 ═══════ -->
       <el-tab-pane label="代理池" name="proxy" v-if="canViewProxy">
-        <div class="mb-2 text-sm">
+        <div class="mb-2 text-sm" v-if="false">
           总数 <strong>{{ proxyStats.total }}</strong> /
           存活 <strong class="c-green">{{ proxyStats.alive }}</strong> /
           死亡 <strong class="c-red">{{ proxyStats.dead }}</strong> /
@@ -119,7 +119,7 @@
 
       <!-- ═══════ Cookie管理 ═══════ -->
       <el-tab-pane label="Cookie" name="cookie" v-if="canViewCookie">
-        <div class="cookie-stats-bar">
+        <div class="cookie-stats-bar" v-if="false">
           <div class="stat-item">
             <span class="stat-number">{{ cookieStats.total }}</span>
             <span class="stat-label">总数</span>
@@ -138,7 +138,7 @@
           </div>
           <div class="stat-item" v-for="(count, region) in cookieStats.by_region" :key="region">
             <span class="stat-number c-blue">{{ count }}</span>
-            <span class="stat-label">{{ region }}</span>
+            <span class="stat-label">{{ regionName(region) }}</span>
           </div>
         </div>
 
@@ -673,6 +673,18 @@ function stateType(state: string): string {
 function stateLabel(state: string): string {
   const m: Record<string, string> = { active: '活跃', suspicious: '可疑', banned: '封禁' }
   return m[state] || state
+}
+
+function regionName(region: string): string {
+  const m: Record<string, string> = {
+    'CN': '中国',
+    'HK': '香港',
+    'TW': '台湾',
+    'JP': '日本',
+    'US': '美国',
+    'KR': '韩国',
+  }
+  return m[region] || region
 }
 
 async function fetchCookieAccounts(page = 1) {

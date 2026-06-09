@@ -62,7 +62,7 @@ async def submit_task():
         task_data["cookie_id"] = cookie_id
         task_data["proxy_key"] = proxy_key
 
-        # 尝试补全电影名（优先 movies 表，其次 douban_ids 表）
+        # 幂等兜底：电影已存在 → 直接标记 douban_ids 已认领，跳过任务提交
         try:
             raw = current_app.services.movie_service.db.raw_mysql()
             rows = await raw.execute_query(
@@ -71,13 +71,23 @@ async def submit_task():
             )
             if rows:
                 task_data["movie_title"] = rows[0]["title"]
-            else:
-                rows = await raw.execute_query(
-                    "SELECT title FROM douban_ids WHERE douban_id=%s LIMIT 1",
-                    (douban_id,),
+                await raw.execute_update(
+                    "UPDATE douban_ids SET is_acquired=1, acquired_at=NOW(), task_id=%s "
+                    "WHERE douban_id=%s",
+                    (task_id, douban_id),
                 )
-                if rows:
-                    task_data["movie_title"] = rows[0]["title"]
+                return jsonify({
+                    "skipped": True,
+                    "reason": "电影基础信息已存在，跳过爬取",
+                    "douban_id": douban_id,
+                    "movie_title": rows[0]["title"],
+                }), 200
+            rows = await raw.execute_query(
+                "SELECT title FROM douban_ids WHERE douban_id=%s LIMIT 1",
+                (douban_id,),
+            )
+            if rows:
+                task_data["movie_title"] = rows[0]["title"]
         except Exception:
             pass  # 查询失败不阻塞任务提交
 

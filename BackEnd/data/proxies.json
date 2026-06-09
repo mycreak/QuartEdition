@@ -11,28 +11,6 @@
       "success_count": 3,
       "fail_count": 0,
       "region": ""
-    },
-    {
-      "host": "169.150.243.35",
-      "port": 8080,
-      "username": "",
-      "password": "",
-      "source": "admin",
-      "added_at": 1780265845.0782704,
-      "success_count": 0,
-      "fail_count": 0,
-      "region": ""
-    },
-    {
-      "host": "117.173.59.214",
-      "port": 8080,
-      "username": "",
-      "password": "",
-      "source": "admin",
-      "added_at": 1780265919.4588704,
-      "success_count": 0,
-      "fail_count": 0,
-      "region": ""
     }
   ]
 }

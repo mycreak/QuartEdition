@@ -449,12 +449,15 @@ class ProxyPool:
 
         输出：{alive, dead(→suspicious), suspicious, banned, total}
         """
+        alive_enabled = len([p for p in self._alive if p.enabled])
+        suspicious_enabled = len([p for p in self._suspicious.values() if p.enabled])
+        total_all = len(self._alive) + len(self._suspicious) + len(self._banned)
         return {
-            "alive": self.alive_count,
-            "dead": self.suspicious_count,        # 前端 ProxyStats.dead 的兼容别名
-            "suspicious": self.suspicious_count,
+            "alive": alive_enabled,
+            "dead": suspicious_enabled,        # 前端 ProxyStats.dead 的兼容别名
+            "suspicious": suspicious_enabled,
             "banned": self.banned_count,
-            "total": self.total_count,
+            "total": total_all,
         }
 
     def list_all(self) -> list[dict]:
