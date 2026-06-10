@@ -6,6 +6,16 @@ export function setupGuards(router: Router): void {
   router.beforeEach(async (to, _from, next) => {
     const authStore = useAuthStore()
 
+    // 兜底：用户输入了不存在的路径
+    if (to.matched.length === 0) {
+      if (!authStore.token) {
+        next({ name: 'Login', query: { redirect: to.fullPath } })
+      } else {
+        next({ name: 'Home' })
+      }
+      return
+    }
+
     if (to.meta.requiresAuth) {
       if (!authStore.token) {
         next({ name: 'Login', query: { redirect: to.fullPath } })
