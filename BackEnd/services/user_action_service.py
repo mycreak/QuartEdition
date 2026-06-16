@@ -481,6 +481,8 @@ class UserActionService:
             "ORDER BY created_at DESC LIMIT 1",
             (user_id, movie_id, action),
         )
+        logger.info("[DEBUG _find_active_action] user_id=%s movie_id=%s action=%s → found=%s",
+                    user_id, movie_id, action, bool(rows))
         return rows[0] if rows else None
 
     def _check_idempotent(self, current: Optional[Dict], action: str) -> None:

@@ -80,7 +80,7 @@ class ReviewService:
         """
         query: Dict[str, Any] = {}
         if comment_status == "published":
-            query["removed_by"] = {"$exists": False}
+            query["removed_by"] = None  # null 或字段不存在 = 已上架
         elif comment_status == "unpublished":
             query["removed_by"] = "admin"
         elif comment_status == "removed":
@@ -130,7 +130,7 @@ class ReviewService:
         try:
             items, total = await self.db.find(
                 table="comments",
-                conditions={"user_id": user_id, "removed_by": {"$exists": False}},
+                conditions={"user_id": user_id, "removed_by": None},
                 projection={
                     "_id": 1, "movie_id": 1, "text": 1, "rating": 1, "date": 1,
                 },
@@ -167,7 +167,7 @@ class ReviewService:
         """
         query: Dict[str, Any] = {}
         if comment_status == "published":
-            query["removed_by"] = {"$exists": False}
+            query["removed_by"] = None  # null 或字段不存在 = 已上架
         elif comment_status == "unpublished":
             query["removed_by"] = "admin"
         elif comment_status == "removed":
@@ -217,10 +217,8 @@ class ReviewService:
         if not movie_id:
             return []
         
-        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
-        projection = {
-            "text": 1, "useful_count": 1, "_id": 0
-        }
+        query = {"movie_id": movie_id, "removed_by": None}
+        projection = {"text": 1, "useful_count": 1, "_id": 0}
 
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
@@ -280,7 +278,7 @@ class ReviewService:
         if not movie_id:
             return []
 
-        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
+        query = {"movie_id": movie_id, "removed_by": None}
         projection = {"text": 1, "_id": 0}
 
         original_type = self.db._get_type()
@@ -335,7 +333,7 @@ class ReviewService:
         if not movie_id:
             return 0
 
-        query = {"movie_id": movie_id, "removed_by": {"$exists": False}}
+        query = {"movie_id": movie_id, "removed_by": None}
         original_type = self.db._get_type()
         self.db.set_database("mongodb")
         try:
