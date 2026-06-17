@@ -402,6 +402,7 @@ function initForm() {
 
 function handleAvatarUploadSuccess(url: string) {
   form.avatar_url = url
+  authStore.fetchUser()
 }
 
 async function handleSubmit() {
@@ -414,8 +415,10 @@ async function handleSubmit() {
         display_name: form.display_name.trim(),
         avatar_url: form.avatar_url,
       })
-      await authStore.updateProfile(res.data.data)
+      // 重新从服务端拉取用户数据，确保 Header 等组件即时刷新
+      await authStore.fetchUser()
       ElMessage.success('保存成功')
+      initForm()
     } catch (err: any) {
       ElMessage.error(err.response?.data?.message || '保存失败')
     } finally {

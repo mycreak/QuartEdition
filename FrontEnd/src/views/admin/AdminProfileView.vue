@@ -127,8 +127,10 @@ const initForm = () => {
 }
 
 /** 头像上传成功回调 */
-const handleAvatarUploadSuccess = (url: string) => {
+const handleAvatarUploadSuccess = async (url: string) => {
   form.avatar_url = url
+  await authStore.fetchUser()
+  ElMessage.success('头像已更新')
 }
 
 /** 提交表单 */
@@ -146,10 +148,11 @@ const handleSubmit = async () => {
       }
       const res = await updateProfile(params)
       
-      // 更新全局用户信息
-      await authStore.updateProfile(res.data.data)
+      // 重新从服务端拉取用户数据，确保 Header 等组件即时刷新
+      await authStore.fetchUser()
       
       ElMessage.success('保存成功')
+      initForm()
     } catch (err: any) {
       ElMessage.error(err.response?.data?.message || '保存失败')
     } finally {
