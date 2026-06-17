@@ -301,7 +301,7 @@ class StyleTagService:
         # 事务执行
         async with self.db.transaction() as tx:
             # ① 迁移关联（ON DUPLICATE KEY 保留最高置信度）
-            await tx.raw_mysql().execute_update(
+            await tx.execute_raw(
                 "INSERT INTO movie_style (movie_id, tag_id, confidence) "
                 "SELECT ms.movie_id, %s, ms.confidence "
                 "FROM movie_style ms "
@@ -312,13 +312,13 @@ class StyleTagService:
             )
 
             # ② 删除被合并标签的旧关联
-            await tx.raw_mysql().execute_update(
+            await tx.execute_raw(
                 "DELETE FROM movie_style WHERE tag_id=%s",
                 (tag_id,),
             )
 
             # ③ 更新标签状态
-            await tx.raw_mysql().execute_update(
+            await tx.execute_raw(
                 "UPDATE movie_style_tag SET review_status=3 WHERE id=%s",
                 (tag_id,),
             )

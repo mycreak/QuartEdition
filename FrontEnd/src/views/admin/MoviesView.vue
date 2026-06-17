@@ -106,10 +106,10 @@
         </div>
 
         <el-table :data="styleTagItems" stripe v-loading="styleTagLoading">
-          <el-table-column prop="tag_id" label="ID" width="70" />
+          <el-table-column prop="id" label="ID" width="70" />
           <el-table-column label="待合并标签" min-width="140">
             <template #default="{ row }">
-              <el-tag size="small" type="warning">{{ row.tag_name }}</el-tag>
+              <el-tag size="small" type="warning">{{ row.name }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="合并到" min-width="140">
@@ -117,16 +117,13 @@
               <el-tag size="small" type="success">{{ row.merged_to_tag_name }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="相似度" width="80">
-            <template #default="{ row }">{{ row.similarity ? (row.similarity * 100).toFixed(0) + '%' : '—' }}</template>
-          </el-table-column>
           <el-table-column label="维度" width="80">
             <template #default="{ row }">{{ row.dimension || '—' }}</template>
           </el-table-column>
           <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" type="success" link :loading="styleTagLoadingId === row.tag_id" @click="handleStyleTagMerge(row)">确认合并</el-button>
-              <el-button size="small" type="warning" link :loading="styleTagLoadingId === row.tag_id" @click="handleStyleTagReject(row)">拒绝</el-button>
+              <el-button size="small" type="success" link :loading="styleTagLoadingId === row.id" @click="handleStyleTagMerge(row)">确认合并</el-button>
+              <el-button size="small" type="warning" link :loading="styleTagLoadingId === row.id" @click="handleStyleTagReject(row)">拒绝</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -663,10 +660,9 @@ function formatDateShort(iso: string): string {
 
 // ==================== 标签审核方法 ====================
 interface StyleTagItem {
-  tag_id: number
-  tag_name: string
+  id: number
+  name: string
   merged_to_tag_name: string
-  similarity: number | null
   dimension: string | null
 }
 
@@ -695,12 +691,12 @@ async function fetchStyleTags(p = 1) {
 
 async function handleStyleTagMerge(row: StyleTagItem) {
   try {
-    await ElMessageBox.confirm(`确认将「${row.tag_name}」合并到「${row.merged_to_tag_name}」吗？`, '确认合并', { type: 'warning' })
+    await ElMessageBox.confirm(`确认将「${row.name}」合并到「${row.merged_to_tag_name}」吗？`, '确认合并', { type: 'warning' })
   } catch { return }
 
-  styleTagLoadingId.value = row.tag_id
+  styleTagLoadingId.value = row.id
   try {
-    await client.post(`/admin/style-tags/${row.tag_id}/confirm-merge`)
+    await client.post(`/admin/style-tags/${row.id}/confirm-merge`)
     ElMessage.success('已合并')
     fetchStyleTags(styleTagPage.value)
   } catch (err: any) {
@@ -712,12 +708,12 @@ async function handleStyleTagMerge(row: StyleTagItem) {
 
 async function handleStyleTagReject(row: StyleTagItem) {
   try {
-    await ElMessageBox.confirm(`确认拒绝「${row.tag_name}」合并到「${row.merged_to_tag_name}」吗？`, '确认拒绝', { type: 'warning' })
+    await ElMessageBox.confirm(`确认拒绝「${row.name}」合并到「${row.merged_to_tag_name}」吗？`, '确认拒绝', { type: 'warning' })
   } catch { return }
 
-  styleTagLoadingId.value = row.tag_id
+  styleTagLoadingId.value = row.id
   try {
-    await client.post(`/admin/style-tags/${row.tag_id}/reject-merge`)
+    await client.post(`/admin/style-tags/${row.id}/reject-merge`)
     ElMessage.success('已拒绝')
     fetchStyleTags(styleTagPage.value)
   } catch (err: any) {
